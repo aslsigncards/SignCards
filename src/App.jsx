@@ -61,6 +61,13 @@ const RECORDING_DURATION_MS = 1000; // ms to record hand motion
 const SEQUENCE_PASS_THRESHOLD = 0.65; // DTW sequence similarity threshold
 const TUTORIAL_STORAGE_KEY = 'asl-signcards-tutorial-seen-v1';
 const SETTINGS_STORAGE_KEY = 'asl-signcards-settings-v1';
+const TUTORIAL_STEPS = [
+  { selector: '[data-tour="menu"]', title: 'Choose your deck', body: 'Open the menu to switch sets, create custom cards, view stats, or change settings.' },
+  { selector: '[data-tour="phase"]', title: 'Build your baseline', body: 'Start in Baseline Setup. Record each sign once so matching is tuned to your hand.' },
+  { selector: '[data-tour="camera"]', title: 'Use the camera view', body: 'Keep your signing hand clearly visible. The live hand landmarks show when the camera can see you.' },
+  { selector: '[data-tour="action"]', title: 'Record or check', body: 'Record a baseline first. Once you enter Practice Mode, Check My Sign measures your attempt against it.' },
+  { selector: '[data-tour="more"]', title: 'Adjust your session', body: 'Use the menu for practice mode, mirroring, re-recording baselines, and card navigation.' },
+];
 
 function normalizeLandmarks(landmarks) {
   if (!landmarks || landmarks.length !== 21) return null;
@@ -226,6 +233,8 @@ export default function App() {
   const [showAllBaselinesModal, setShowAllBaselinesModal] = useState(false);
   const [showPracticeWithMissingModal, setShowPracticeWithMissingModal] = useState(false);
   const [showPracticeInstructions, setShowPracticeInstructions] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [tutorialTargetRect, setTutorialTargetRect] = useState(null);
   const [statsSetKey, setStatsSetKey] = useState(null);
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -976,6 +985,16 @@ export default function App() {
     window.alert(`Import complete! ${(data.customSets || []).length} set(s) imported.`);
   };
 
+  const enterPractice = () => {
+    setWorkflowPhase('practice');
+    setCurrentIndex(0);
+    setPracticeResult(null);
+    if (!hasShownRecordingInstructionsRef.current) {
+      setShowPracticeInstructions(true);
+      hasShownRecordingInstructionsRef.current = true;
+    }
+  };
+
   const switchToPracticeIfReady = () => {
     if (wordsWithBaseline.length === 0) {
       window.alert('Record at least one baseline before switching to practice.');
@@ -985,13 +1004,7 @@ export default function App() {
       setShowPracticeWithMissingModal(true);
       return;
     }
-    setWorkflowPhase('practice');
-    setCurrentIndex(0);
-    setPracticeResult(null);
-    if (!hasShownRecordingInstructionsRef.current) {
-      setShowPracticeInstructions(true);
-      hasShownRecordingInstructionsRef.current = true;
-    }
+    enterPractice();
   };
 
   const switchToBaseline = () => {
@@ -1270,6 +1283,22 @@ export default function App() {
   }, [view]);
 
   useEffect(() => {
+    if (!showTutorial || view !== 'app') return undefined;
+    const updateTutorialTarget = () => {
+      const target = document.querySelector(TUTORIAL_STEPS[tutorialStep]?.selector);
+      if (!target) {
+        setTutorialTargetRect(null);
+        return;
+      }
+      const rect = target.getBoundingClientRect();
+      setTutorialTargetRect({ top: rect.top, left: rect.left, width: rect.width, height: rect.height });
+    };
+    updateTutorialTarget();
+    window.addEventListener('resize', updateTutorialTarget);
+    return () => window.removeEventListener('resize', updateTutorialTarget);
+  }, [showTutorial, tutorialStep, view, workflowPhase]);
+
+  useEffect(() => {
     if (!referencesLoaded) return;
     hasShownRecordingInstructionsRef.current = false;
     const refs = allReferencesRef.current;
@@ -1284,10 +1313,6 @@ export default function App() {
       baselineSessionHadMissingRef.current = false;
       setWorkflowPhase('practice');
       setCurrentIndex(0);
-      if (!hasShownRecordingInstructionsRef.current) {
-        setShowPracticeInstructions(true);
-        hasShownRecordingInstructionsRef.current = true;
-      }
     } else {
       baselineSessionHadMissingRef.current = true;
       setWorkflowPhase('baseline');
@@ -1357,6 +1382,8 @@ export default function App() {
       window.localStorage.setItem(TUTORIAL_STORAGE_KEY, '1');
     }
     setShowTutorial(false);
+    setTutorialStep(0);
+    setTutorialTargetRect(null);
   };
 
   return (
@@ -1364,6 +1391,7 @@ export default function App() {
       <header className={`sticky top-0 z-50 border-b ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`}>
         <div className="w-full flex h-16 items-center justify-between px-6">
           <div
+            data-tour="menu"
             className="flex cursor-pointer items-center gap-2"
             onClick={() => setIsSidebarOpen(true)}
           >
@@ -1452,7 +1480,7 @@ export default function App() {
       ) : appPage === 'learn' ? (
         <main className="w-full h-[calc(100vh-4rem)] flex flex-col">
           {/* Phase header */}
-          <div className={`relative flex flex-shrink-0 items-center justify-between px-4 py-3 ${workflowPhase === 'baseline' ? 'bg-orange-500' : 'bg-emerald-600'}`}>
+          <div data-tour="phase" className={`relative flex flex-shrink-0 items-center justify-between px-4 py-3 ${workflowPhase === 'baseline' ? 'bg-orange-500' : 'bg-emerald-600'}`}>
             <div className="flex items-center gap-2 text-white">
               <div className="h-2 w-2 rounded-full bg-white/80" />
               <span className="text-sm font-bold tracking-wide uppercase">
@@ -1482,6 +1510,7 @@ export default function App() {
               </button>
             ) : null}
             <button
+              data-tour="more"
               onClick={() => setIsOverflowMenuOpen((prev) => !prev)}
               className="rounded-lg p-2 text-white transition-colors hover:bg-white/20"
               title="More options"
@@ -1541,7 +1570,7 @@ export default function App() {
           </div>
 
           {/* Camera */}
-          <div className="relative min-h-0 flex-1 overflow-hidden bg-slate-900 flex items-center justify-center">
+          <div data-tour="camera" className="relative min-h-0 flex-1 overflow-hidden bg-slate-900 flex items-center justify-center">
             <div
               className="relative max-w-full max-h-full"
               style={videoAspect ? { aspectRatio: videoAspect } : { width: '100%', height: '100%' }}
@@ -1666,7 +1695,7 @@ export default function App() {
           </div>
 
           {/* Action bar */}
-          <div className={`flex flex-shrink-0 items-center gap-3 border-t px-4 py-3 ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`}>
+          <div data-tour="action" className={`flex flex-shrink-0 items-center gap-3 border-t px-4 py-3 ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`}>
             <button
               onClick={() => { setCurrentIndex((prev) => Math.max(0, prev - 1)); setPracticeResult(null); }}
               disabled={currentIndex === 0 || isActiveRecording || !!practiceResult}
@@ -2624,9 +2653,7 @@ export default function App() {
               <button
                 onClick={() => {
                   setShowAllBaselinesModal(false);
-                  setWorkflowPhase('practice');
-                  setCurrentIndex(0);
-                  setPracticeResult(null);
+                  enterPractice();
                 }}
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
               >
@@ -2654,9 +2681,7 @@ export default function App() {
               <button
                 onClick={() => {
                   setShowPracticeWithMissingModal(false);
-                  setWorkflowPhase('practice');
-                  setCurrentIndex(0);
-                  setPracticeResult(null);
+                  enterPractice();
                 }}
                 className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700"
               >
@@ -2803,30 +2828,35 @@ export default function App() {
       ) : null}
 
       {showTutorial && view === 'app' ? (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4">
-          <div className={`w-full max-w-xl rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
-            <h2 className={`text-2xl font-black tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Quick Start Tutorial</h2>
-            <ol className={`mt-4 list-decimal space-y-2 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-              <li>Open the sidebar using the ASL button in the top-left, then select a set from Select Set.</li>
-              <li>In Baseline Setup, record each sign once. The app walks sign-by-sign until all baselines are captured.</li>
-              <li>Switch to Practice Mode and use Check My Sign to compare your live sign against your own baseline.</li>
-              <li>If your form changes, use Re-record Baseline at any time.</li>
-              <li>Both recording and checking include a 1.5 second get-ready buffer so you can prepare.</li>
-            </ol>
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button
-                onClick={() => { closeTutorial(true); setAppPage('learn'); }}
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700"
-              >
-                Got It
-              </button>
-              <button
-                onClick={() => { closeTutorial(false); setAppPage('learn'); }}
-                className={`rounded-lg border px-4 py-2 text-sm font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}
-              >
-                Back
-              </button>
+        <div className="fixed inset-0 z-[80] bg-slate-950/65">
+          {tutorialTargetRect ? (
+            <div
+              className="pointer-events-none fixed rounded-xl border-2 border-indigo-300 shadow-[0_0_0_9999px_rgba(2,6,23,0.65),0_0_24px_rgba(165,180,252,0.9)] transition-all duration-300"
+              style={{ top: tutorialTargetRect.top - 6, left: tutorialTargetRect.left - 6, width: tutorialTargetRect.width + 12, height: tutorialTargetRect.height + 12 }}
+            />
+          ) : null}
+          <div className="fixed inset-x-4 bottom-6 mx-auto max-w-md sm:bottom-10">
+            <div className={`rounded-2xl border p-5 shadow-2xl ${isDarkMode ? 'border-indigo-400/40 bg-slate-800 text-slate-100' : 'border-indigo-200 bg-white text-slate-900'}`}>
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-widest text-indigo-500">Quick Start</p>
+                <span className={`text-xs font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{tutorialStep + 1} of {TUTORIAL_STEPS.length}</span>
+              </div>
+              <h2 className="text-xl font-black tracking-tight">{TUTORIAL_STEPS[tutorialStep].title}</h2>
+              <p className={`mt-2 text-sm leading-6 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{TUTORIAL_STEPS[tutorialStep].body}</p>
+              <div className="mt-5 flex items-center justify-between gap-2">
+                <button
+                  onClick={() => tutorialStep === 0 ? closeTutorial(false) : setTutorialStep((step) => step - 1)}
+                  className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}
+                >
+                  {tutorialStep === 0 ? 'Skip' : 'Back'}
+                </button>
+                <button
+                  onClick={() => tutorialStep === TUTORIAL_STEPS.length - 1 ? closeTutorial(true) : setTutorialStep((step) => step + 1)}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700"
+                >
+                  {tutorialStep === TUTORIAL_STEPS.length - 1 ? 'Finish' : 'Next'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
