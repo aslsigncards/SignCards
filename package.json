@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "start": "vite preview --host 0.0.0.0 --port 8080",
+    "start": "serve -s dist -l tcp://0.0.0.0:$PORT",
     "lint": "oxlint",
     "preview": "vite preview"
   },
@@ -19,7 +19,8 @@
     "lucide-react": "^1.23.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-webcam": "^7.2.0"
+    "react-webcam": "^7.2.0",
+    "serve": "^14.2.6"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",
