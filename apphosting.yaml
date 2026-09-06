@@ -1,0 +1,29 @@
+env:
+  - variable: VITE_FIREBASE_API_KEY
+    value: "AIzaSyDlXxLhnWj-OgxmV40IWe5zBrCaefC4kgI"
+    availability:
+      - BUILD
+  - variable: VITE_FIREBASE_AUTH_DOMAIN
+    value: "signcards.firebaseapp.com"
+    availability:
+      - BUILD
+  - variable: VITE_FIREBASE_PROJECT_ID
+    value: "signcards"
+    availability:
+      - BUILD
+  - variable: VITE_FIREBASE_STORAGE_BUCKET
+    value: "signcards.firebasestorage.app"
+    availability:
+      - BUILD
+  - variable: VITE_FIREBASE_MESSAGING_SENDER_ID
+    value: "1043018319995"
+    availability:
+      - BUILD
+  - variable: VITE_FIREBASE_APP_ID
+    value: "1:1043018319995:web:28c435c81891159841fade"
+    availability:
+      - BUILD
+  - variable: VITE_FIREBASE_MEASUREMENT_ID
+    value: "G-1NQRCQ3QKK"
+    availability:
+      - BUILD
