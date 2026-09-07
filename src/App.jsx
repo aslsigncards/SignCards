@@ -15,6 +15,7 @@ import {
   Home,
   Layers,
   LoaderCircle,
+  Mail,
   MoreHorizontal,
   Moon,
   Pause,
@@ -61,6 +62,86 @@ const RECORDING_DURATION_MS = 1000; // ms to record hand motion
 const SEQUENCE_PASS_THRESHOLD = 0.65; // DTW sequence similarity threshold
 const TUTORIAL_STORAGE_KEY = 'asl-signcards-tutorial-seen-v1';
 const SETTINGS_STORAGE_KEY = 'asl-signcards-settings-v1';
+const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
+const MAX_IMPORT_SETS = 500;
+const MAX_IMPORT_REFERENCES = 5000;
+const MAX_IMPORT_HISTORY = 100000;
+const MAX_FRAMES_PER_SLOT = 600;
+
+const isPlainRecord = (value) =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const cleanText = (value, maxLength) =>
+  typeof value === 'string' ? value.replace(/[#[\]*/\\?]/g, '').slice(0, maxLength) : '';
+
+const cleanFrames = (frames) => {
+  if (!Array.isArray(frames)) return null;
+  const clean = frames.slice(0, MAX_FRAMES_PER_SLOT).map((frame) =>
+    Array.isArray(frame) && frame.length === 21
+      ? frame.map((lm) => ({
+          x: Number(lm?.x) || 0,
+          y: Number(lm?.y) || 0,
+          z: Number(lm?.z) || 0,
+        }))
+      : null
+  );
+  return clean.every(Boolean) && clean.length > 0 ? clean : null;
+};
+
+/**
+ * Rebuilds a backup file into known-shape records. Untrusted JSON is never
+ * spread into the database, so unexpected or `__proto__` keys cannot survive.
+ */
+function sanitizeImport(parsed) {
+  if (!isPlainRecord(parsed) || !parsed.schemaVersion || !Array.isArray(parsed.customSets)) return null;
+
+  const customSets = parsed.customSets
+    .filter(isPlainRecord)
+    .slice(0, MAX_IMPORT_SETS)
+    .map((set) => ({
+      id: Number.isFinite(set.id) ? set.id : null,
+      title: cleanText(set.title, 120),
+      words: (Array.isArray(set.words) ? set.words : [])
+        .slice(0, 1000)
+        .map((card) => ({
+          word: cleanText(typeof card === 'string' ? card : card?.word, 64).toUpperCase(),
+          isMultiSign: Boolean(isPlainRecord(card) && card.isMultiSign),
+          components: (isPlainRecord(card) && Array.isArray(card.components) ? card.components : [])
+            .slice(0, 32)
+            .map((component) => cleanText(component, 64))
+            .filter(Boolean),
+        }))
+        .filter((card) => card.word),
+    }))
+    .filter((set) => set.title && set.words.length);
+
+  const references = (Array.isArray(parsed.references) ? parsed.references : [])
+    .filter(isPlainRecord)
+    .slice(0, MAX_IMPORT_REFERENCES)
+    .map((reference) => ({
+      word: cleanText(reference.word, 200),
+      timestamp: Number.isFinite(reference.timestamp) ? reference.timestamp : Date.now(),
+      frames: cleanFrames(reference.frames),
+      frames2: cleanFrames(reference.frames2),
+    }))
+    .filter((reference) => reference.word && (reference.frames || reference.frames2));
+
+  const history = (Array.isArray(parsed.history) ? parsed.history : [])
+    .filter(isPlainRecord)
+    .slice(0, MAX_IMPORT_HISTORY)
+    .map((entry) => ({
+      word: cleanText(entry.word, 200),
+      timestamp: Number.isFinite(entry.timestamp) ? entry.timestamp : 0,
+      status: entry.status === 'correct' ? 'correct' : 'incorrect',
+      ...(Number.isFinite(entry.similarity)
+        ? { similarity: Math.min(1, Math.max(0, entry.similarity)) }
+        : {}),
+    }))
+    .filter((entry) => entry.word && entry.timestamp);
+
+  return { customSets, references, history };
+}
+
 const TUTORIAL_STEPS = [
   { selector: '[data-tour="menu"]', title: 'Choose your deck', body: 'Open the menu to switch sets, create custom cards, view stats, or change settings.' },
   { selector: '[data-tour="phase"]', title: 'Build your baseline', body: 'Start in Baseline Setup. Record each sign once so matching is tuned to your hand.' },
@@ -156,6 +237,10 @@ function dtwSimilarity(seq1, seq2) {
  */
 function compareSequences(captured, reference) {
   return dtwSimilarity(smoothFrames(captured, 3), smoothFrames(reference, 3));
+}
+
+function hasRecordedBaseline(reference) {
+  return Boolean(reference?.frames || reference?.frames2);
 }
 
 /**
@@ -317,7 +402,7 @@ export default function App() {
   const activeWords = activeSetOption?.words?.length ? activeSetOption.words : PRESETS.fingerspelling;
   const getReferenceKey = (word) => `${currentSet}:${word}`;
   const wordsWithBaseline = activeWords.filter((w) =>
-    allReferences.some((r) => r.word === getReferenceKey(w) && (r.frames || r.frames2))
+    hasRecordedBaseline(allReferences.find((ref) => ref.word === getReferenceKey(w)))
   );
   const modeWords = workflowPhase === 'practice' ? wordsWithBaseline : activeWords;
   const currentWord = modeWords[currentIndex] ?? modeWords[0] ?? '';
@@ -451,7 +536,7 @@ export default function App() {
     const freshRefs = allReferencesRef.current;
     const freshWords = activeWordsRef.current;
     const freshSet = currentSetRef.current;
-    const updatedKeys = new Set(freshRefs.filter((ref) => ref.frames).map((ref) => ref.word));
+    const updatedKeys = new Set(freshRefs.filter(hasRecordedBaseline).map((ref) => ref.word));
     updatedKeys.add(currentKey);
     const nextMissingIndex = freshWords.findIndex((word) => !updatedKeys.has(`${freshSet}:${word}`));
 
@@ -919,15 +1004,20 @@ export default function App() {
     if (!file) return;
     event.target.value = '';
 
+    if (file.size > MAX_IMPORT_BYTES) {
+      window.alert('That backup file is too large to import (limit 50 MB).');
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const parsed = JSON.parse(e.target.result);
-        if (!parsed.schemaVersion || !Array.isArray(parsed.customSets)) {
+        const sanitized = sanitizeImport(JSON.parse(e.target.result));
+        if (!sanitized) {
           window.alert('Invalid backup file. Please use a file exported from SignCards.');
           return;
         }
-        setPendingImportData(parsed);
+        setPendingImportData(sanitized);
       } catch {
         window.alert('Could not read the file. Make sure it is a valid SignCards backup (.json).');
       }
@@ -1012,11 +1102,11 @@ export default function App() {
     const refs = allReferencesRef.current;
     const words = activeWordsRef.current;
     const set = currentSetRef.current;
-    const missingCount = words.filter((w) => !refs.some((r) => r.word === `${set}:${w}` && r.frames)).length;
+    const missingCount = words.filter((w) => !hasRecordedBaseline(refs.find((ref) => ref.word === `${set}:${w}`))).length;
     baselineSessionHadMissingRef.current = missingCount > 0;
     setWorkflowPhase('baseline');
     setPracticeResult(null);
-    const existingKeys = new Set(refs.filter((ref) => ref.frames).map((ref) => ref.word));
+    const existingKeys = new Set(refs.filter(hasRecordedBaseline).map((ref) => ref.word));
     const nextMissingIndex = words.findIndex((word) => !existingKeys.has(`${set}:${word}`));
     setCurrentIndex(nextMissingIndex === -1 ? 0 : nextMissingIndex);
   };
@@ -1306,7 +1396,7 @@ export default function App() {
     const set = currentSet;
 
     const setReady = words.every((word) =>
-      refs.some((ref) => ref.word === `${set}:${word}` && ref.frames)
+      hasRecordedBaseline(refs.find((ref) => ref.word === `${set}:${word}`))
     );
 
     if (setReady) {
@@ -1316,7 +1406,7 @@ export default function App() {
     } else {
       baselineSessionHadMissingRef.current = true;
       setWorkflowPhase('baseline');
-      const existingKeys = new Set(refs.filter((ref) => ref.frames).map((ref) => ref.word));
+      const existingKeys = new Set(refs.filter(hasRecordedBaseline).map((ref) => ref.word));
       const nextMissingIndex = words.findIndex((word) => !existingKeys.has(`${set}:${word}`));
       setCurrentIndex(nextMissingIndex === -1 ? 0 : nextMissingIndex);
     }
@@ -1569,8 +1659,20 @@ export default function App() {
             ) : null}
           </div>
 
+          {workflowPhase === 'practice' && missingBaselineCount > 0 ? (
+            <div className={`flex flex-shrink-0 items-center justify-between gap-3 border-b px-4 py-2 text-xs sm:text-sm ${isDarkMode ? 'border-amber-900/70 bg-amber-950/40 text-amber-100' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
+              <p><strong>Only cards with recorded baselines appear in practice.</strong> {missingBaselineCount} card{missingBaselineCount !== 1 ? 's are' : ' is'} missing.</p>
+              <button
+                onClick={switchToBaseline}
+                className={`flex-shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold ${isDarkMode ? 'bg-amber-300 text-amber-950 hover:bg-amber-200' : 'bg-amber-500 text-white hover:bg-amber-600'}`}
+              >
+                Record Missing
+              </button>
+            </div>
+          ) : null}
+
           {/* Camera */}
-          <div data-tour="camera" className="relative min-h-0 flex-1 overflow-hidden bg-slate-900 flex items-center justify-center">
+          <div data-tour="camera" className={`relative min-h-0 flex-1 overflow-hidden flex items-center justify-center ${isDarkMode ? 'bg-slate-900' : 'bg-white'}`}>
             <div
               className="relative max-w-full max-h-full"
               style={videoAspect ? { aspectRatio: videoAspect } : { width: '100%', height: '100%' }}
@@ -1588,8 +1690,8 @@ export default function App() {
               <p className="text-[10px] font-semibold uppercase tracking-widest opacity-70">Sign this</p>
               <p className="mt-0.5 text-4xl font-black leading-none tracking-tight">{currentWord}</p>
               <div className="mt-1.5 flex items-center gap-1.5">
-                <div className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${activeReference?.frames ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                <span className="text-[10px] font-semibold opacity-70">{activeReference?.frames ? 'Baseline recorded' : 'Record baseline'}</span>
+                <div className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${hasRecordedBaseline(activeReference) ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                <span className="text-[10px] font-semibold opacity-70">{hasRecordedBaseline(activeReference) ? 'Baseline recorded' : 'Record baseline'}</span>
               </div>
             </div>
 
@@ -1712,13 +1814,13 @@ export default function App() {
               >
                 {engineLoading
                   ? <><LoaderCircle className="h-5 w-5 animate-spin" /><span>Initializing…</span></>
-                  : <><Radio className={`h-5 w-5 ${isRecordingReference ? 'animate-ping' : ''}`} /><span>{activeReference?.frames ? 'Re-record Baseline' : 'Record Baseline'}</span></>
+                  : <><Radio className={`h-5 w-5 ${isRecordingReference ? 'animate-ping' : ''}`} /><span>{hasRecordedBaseline(activeReference) ? 'Re-record Baseline' : 'Record Baseline'}</span></>
                 }
               </button>
             ) : (
               <button
                 onClick={() => startBufferedAction('check')}
-                disabled={isBuffering || !activeReference?.frames || engineLoading || !!practiceResult || isActiveRecording}
+                disabled={isBuffering || !hasRecordedBaseline(activeReference) || engineLoading || !!practiceResult || isActiveRecording}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {engineLoading
@@ -2301,24 +2403,45 @@ export default function App() {
             <p className={`mt-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               SignCards is a local-first ASL training app using personalized baseline verification from webcam hand landmarks.
             </p>
-            <p className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
-              Thanks to MediaPipe Tasks Vision, React Webcam, Dexie.js, and open ASL learning communities.
-            </p>
+            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+              <p className="font-semibold">Built with the community</p>
+              <p className="mt-1 text-sm">
+                SignCards is developed in collaboration with the McMaster ASL Club and the learners who
+                test it, report bugs, and suggest signs to add. Their feedback shapes what gets built next.
+              </p>
+            </div>
+            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                <p className="font-semibold">Build on it</p>
+              </div>
+              <p className="mt-1 text-sm">
+                The project is open source. Fork it, remix it, or spin it off for another signed language,
+                a different curriculum, or your own club. Pull requests, new card sets, and independent
+                offshoots are all welcome — you do not need permission to start.
+              </p>
+            </div>
             <div className={`mt-4 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
               <p className="font-semibold">GitHub Repository</p>
               <a
-                href="https://github.com/"
+                href="https://github.com/aslsigncards/SignCards"
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="mt-1 inline-flex items-center gap-2 text-indigo-400 underline"
               >
                 <GitBranch className="h-4 w-4" />
-                <span>Project Repo Placeholder</span>
+                <span>aslsigncards/SignCards</span>
               </a>
             </div>
-            <div className={`mt-3 flex items-center gap-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-700'}`}>
-              <Users className="h-4 w-4" />
-              <span>Community contribution section placeholder</span>
+            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+              <p className="font-semibold">Questions</p>
+              <a
+                href="mailto:aslsigncards@gmail.com"
+                className="mt-1 inline-flex items-center gap-2 text-indigo-400 underline"
+              >
+                <Mail className="h-4 w-4" />
+                <span>aslsigncards@gmail.com</span>
+              </a>
             </div>
           </section>
         </main>
