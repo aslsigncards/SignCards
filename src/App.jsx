@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Webcam from 'react-webcam';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
+import { FilesetResolver, HandLandmarker, FaceDetector } from '@mediapipe/tasks-vision';
 import { db } from './db';
 import {
   ArrowRight,
@@ -52,624 +52,19 @@ import {
   uploadCustomSet, uploadHistoryEntry, uploadAllLocalData,
 } from './syncService';
 
-const PRESETS = {
-  fingerspelling: Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i)),
-  numbers: Array.from({ length: 11 }, (_, i) => String(i))
-};
-
-const READY_BUFFER_MS = 1500;
-const PASS_THRESHOLD = 0.82; // legacy single-frame fallback
-const RECORDING_DURATION_MS = 1000; // ms to record hand motion
-const SEQUENCE_PASS_THRESHOLD = 0.65; // combined shape + motion + finger score
-
-// Matching tuning. Lower tolerances and a tighter band mean stricter grading.
-const SHAPE_DISTANCE_TOLERANCE = 0.45; // normalized units before a frame scores 0
-const MOTION_DISTANCE_TOLERANCE = 1.2; // hand-lengths before a trajectory point scores 0
-const MOTION_DYNAMIC_PATH = 0.6; // wrist travel (hand-lengths) that marks a sign as dynamic
-const FINGER_TOLERANCE = 0.28; // mean extension difference before the finger score hits 0
-const DTW_BAND_RATIO = 0.3; // Sakoe-Chiba warping band as a fraction of sequence length
-const MOTION_FAIL_CAP = 0.5; // ceiling when a dynamic sign was performed static
-const MOTION_PARTIAL_CAP = 0.64; // ceiling when movement is present but clearly wrong
-const TIP_PAIR_TOLERANCE = 0.5; // hand-lengths of fingertip gap difference before scoring 0
-const TIP_PAIR_NOTE_DELTA = 0.22; // gap difference that earns a spacing note
-const SPLAY_TOLERANCE = 0.5; // radians of splay difference before scoring 0
-const CROSSING_TOLERANCE = 0.6; // signed-volume difference before scoring 0
-const CROSSING_DEADZONE = 0.15; // near-parallel fingers (U) sit near zero; keep margin before calling it crossed
-const CROSSING_FAIL_CAP = 0.6; // ceiling when fingers are crossed the wrong way
-const THUMB_TOLERANCE = 0.6; // hand-lengths of thumb-distance difference before scoring 0
-
-// Relative influence of each matching feature; renormalized over enabled features.
-const MATCH_WEIGHTS = {
-  shape: 0.35,
-  motion: 0.22,
-  extension: 0.15,
-  tipPairs: 0.1,
-  splay: 0.07,
-  crossing: 0.06,
-  thumb: 0.05,
-};
-
-const MATCH_FEATURE_LIST = [
-  { key: 'shape', label: 'Handshape (DTW)', description: 'Overall landmark match across the whole sign.' },
-  { key: 'motion', label: 'Movement path', description: 'Requires dynamic signs to actually move, and static signs to stay put.' },
-  { key: 'extension', label: 'Finger extension', description: 'Whether each finger is extended or curled in.' },
-  { key: 'tipPairs', label: 'Fingertip spacing', description: 'Gaps between neighbouring fingertips. Separates U from V.' },
-  { key: 'splay', label: 'Splay angles', description: 'Angles between finger directions.' },
-  { key: 'crossing', label: 'Finger crossing', description: 'Detects crossed index and middle fingers, as in R.' },
-  { key: 'thumb', label: 'Thumb position', description: 'Which finger the thumb sits nearest. Separates A, S, T, M and N.' },
-];
-
-const DEFAULT_MATCH_FEATURES = Object.fromEntries(MATCH_FEATURE_LIST.map((f) => [f.key, true]));
-
-const readMatchFeatures = (stored) => Object.fromEntries(
-  MATCH_FEATURE_LIST.map((f) => [f.key, stored?.[f.key] !== false])
-);
-const TUTORIAL_STORAGE_KEY = 'asl-signcards-tutorial-seen-v1';
-const SETTINGS_STORAGE_KEY = 'asl-signcards-settings-v1';
-const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
-const MAX_IMPORT_SETS = 500;
-const MAX_IMPORT_REFERENCES = 5000;
-const MAX_IMPORT_HISTORY = 100000;
-const MAX_FRAMES_PER_SLOT = 600;
-
-const isPlainRecord = (value) =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const cleanText = (value, maxLength) =>
-  typeof value === 'string' ? value.replace(/[#[\]*/\\?]/g, '').slice(0, maxLength) : '';
-
-const cleanFrames = (frames) => {
-  if (!Array.isArray(frames)) return null;
-  const clean = frames.slice(0, MAX_FRAMES_PER_SLOT).map((frame) =>
-    Array.isArray(frame) && frame.length === 21
-      ? frame.map((lm) => ({
-          x: Number(lm?.x) || 0,
-          y: Number(lm?.y) || 0,
-          z: Number(lm?.z) || 0,
-        }))
-      : null
-  );
-  return clean.every(Boolean) && clean.length > 0 ? clean : null;
-};
-
-const cleanMotion = (samples) => {
-  if (!Array.isArray(samples)) return null;
-  const clean = samples.slice(0, MAX_FRAMES_PER_SLOT).map((s) => ({
-    x: Number(s?.x) || 0,
-    y: Number(s?.y) || 0,
-    z: Number(s?.z) || 0,
-    s: Number(s?.s) || 1,
-  }));
-  return clean.length ? clean : null;
-};
-
-/**
- * Rebuilds a backup file into known-shape records. Untrusted JSON is never
- * spread into the database, so unexpected or `__proto__` keys cannot survive.
- */
-function sanitizeImport(parsed) {
-  if (!isPlainRecord(parsed) || !parsed.schemaVersion || !Array.isArray(parsed.customSets)) return null;
-
-  const customSets = parsed.customSets
-    .filter(isPlainRecord)
-    .slice(0, MAX_IMPORT_SETS)
-    .map((set) => ({
-      id: Number.isFinite(set.id) ? set.id : null,
-      title: cleanText(set.title, 120),
-      words: (Array.isArray(set.words) ? set.words : [])
-        .slice(0, 1000)
-        .map((card) => ({
-          word: cleanText(typeof card === 'string' ? card : card?.word, 64).toUpperCase(),
-          isMultiSign: Boolean(isPlainRecord(card) && card.isMultiSign),
-          components: (isPlainRecord(card) && Array.isArray(card.components) ? card.components : [])
-            .slice(0, 32)
-            .map((component) => cleanText(component, 64))
-            .filter(Boolean),
-        }))
-        .filter((card) => card.word),
-    }))
-    .filter((set) => set.title && set.words.length);
-
-  const references = (Array.isArray(parsed.references) ? parsed.references : [])
-    .filter(isPlainRecord)
-    .slice(0, MAX_IMPORT_REFERENCES)
-    .map((reference) => ({
-      word: cleanText(reference.word, 200),
-      timestamp: Number.isFinite(reference.timestamp) ? reference.timestamp : Date.now(),
-      frames: cleanFrames(reference.frames),
-      frames2: cleanFrames(reference.frames2),
-      motion: cleanMotion(reference.motion),
-      motion2: cleanMotion(reference.motion2),
-    }))
-    .filter((reference) => reference.word && (reference.frames || reference.frames2));
-
-  const history = (Array.isArray(parsed.history) ? parsed.history : [])
-    .filter(isPlainRecord)
-    .slice(0, MAX_IMPORT_HISTORY)
-    .map((entry) => ({
-      word: cleanText(entry.word, 200),
-      timestamp: Number.isFinite(entry.timestamp) ? entry.timestamp : 0,
-      status: entry.status === 'correct' ? 'correct' : 'incorrect',
-      ...(Number.isFinite(entry.similarity)
-        ? { similarity: Math.min(1, Math.max(0, entry.similarity)) }
-        : {}),
-    }))
-    .filter((entry) => entry.word && entry.timestamp);
-
-  return { customSets, references, history };
-}
-
-const TUTORIAL_STEPS = [
-  { selector: '[data-tour="menu"]', title: 'Choose your deck', body: 'Open the menu to switch sets, create custom cards, view stats, or change settings.' },
-  { selector: '[data-tour="phase"]', title: 'Build your baseline', body: 'Start in Baseline Setup. Record each sign once so matching is tuned to your hand.' },
-  { selector: '[data-tour="camera"]', title: 'Use the camera view', body: 'Keep your signing hand clearly visible. The live hand landmarks show when the camera can see you.' },
-  { selector: '[data-tour="action"]', title: 'Record or check', body: 'In Baseline Setup this button records your reference sign. In Practice Mode it becomes Check My Sign and scores your attempt against that reference.' },
-  { selector: '[data-tour="more"]', title: 'Switch modes anytime', body: 'This menu moves you between Baseline Setup and Practice Mode, and holds mirroring, re-recording, and card navigation. Open it when you are ready to practice.' },
-];
-
-function normalizeLandmarks(landmarks) {
-  if (!landmarks || landmarks.length !== 21) return null;
-
-  const wrist = landmarks[0];
-  const centered = landmarks.map((lm) => ({
-    x: lm.x - wrist.x,
-    y: lm.y - wrist.y,
-    z: lm.z - wrist.z
-  }));
-
-  const scale = Math.hypot(centered[9].x, centered[9].y, centered[9].z) || 1;
-
-  return centered.map((lm) => ({
-    x: lm.x / scale,
-    y: lm.y / scale,
-    z: lm.z / scale
-  }));
-}
-
-/**
- * Wrist position plus hand size, captured before wrist-centering discards it.
- * Without this, a static hold and a travelling sign look identical.
- */
-function motionSample(landmarks) {
-  if (!landmarks || landmarks.length !== 21) return null;
-  const wrist = landmarks[0];
-  const midMcp = landmarks[9];
-  const s = Math.hypot(midMcp.x - wrist.x, midMcp.y - wrist.y, midMcp.z - wrist.z) || 1;
-  return { x: wrist.x, y: wrist.y, z: wrist.z, s };
-}
-
-const pointDistance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-
-const median = (values) => {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-};
-
-const clamp01 = (value) => Math.max(0, Math.min(1, value));
-
-// Expressed in hand-lengths so results are independent of distance from camera.
-function normalizeMotion(samples) {
-  if (!samples?.length) return null;
-  const scale = median(samples.map((s) => s.s)) || 1;
-  const cx = samples.reduce((a, s) => a + s.x, 0) / samples.length;
-  const cy = samples.reduce((a, s) => a + s.y, 0) / samples.length;
-  const cz = samples.reduce((a, s) => a + s.z, 0) / samples.length;
-  return samples.map((s) => ({
-    x: (s.x - cx) / scale,
-    y: (s.y - cy) / scale,
-    z: (s.z - cz) / scale,
-  }));
-}
-
-function motionFeatures(points) {
-  if (!points?.length) return null;
-  let path = 0;
-  for (let i = 1; i < points.length; i++) path += pointDistance(points[i - 1], points[i]);
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
-  return {
-    path,
-    rangeX: Math.max(...xs) - Math.min(...xs),
-    rangeY: Math.max(...ys) - Math.min(...ys),
-    netX: xs[xs.length - 1] - xs[0],
-    netY: ys[ys.length - 1] - ys[0],
-  };
-}
-
-const FINGERS = [
-  { name: 'Thumb', joints: [1, 2, 3, 4] },
-  { name: 'Index', joints: [5, 6, 7, 8] },
-  { name: 'Middle', joints: [9, 10, 11, 12] },
-  { name: 'Ring', joints: [13, 14, 15, 16] },
-  { name: 'Pinky', joints: [17, 18, 19, 20] },
-];
-
-const FINGER_EXTENDED = 0.82;
-
-/**
- * Straightness per finger: tip-to-knuckle distance over the summed joint chain.
- * ~1.0 when the finger is straight, ~0.4 or lower when curled.
- */
-function fingerExtensions(frame) {
-  return FINGERS.map(({ joints: [a, b, c, d] }) => {
-    const chain =
-      pointDistance(frame[a], frame[b]) +
-      pointDistance(frame[b], frame[c]) +
-      pointDistance(frame[c], frame[d]);
-    if (chain <= 1e-6) return 0;
-    return Math.min(1, pointDistance(frame[a], frame[d]) / chain);
-  });
-}
-
-function meanFingerExtensions(frames) {
-  if (!frames?.length) return null;
-  const sums = [0, 0, 0, 0, 0];
-  frames.forEach((frame) => {
-    fingerExtensions(frame).forEach((value, i) => { sums[i] += value; });
-  });
-  return sums.map((sum) => sum / frames.length);
-}
-
-const vecSub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
-const vecDot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
-const vecCross = (a, b) => ({
-  x: a.y * b.z - a.z * b.y,
-  y: a.z * b.x - a.x * b.z,
-  z: a.x * b.y - a.y * b.x,
-});
-const vecUnit = (v) => {
-  const mag = Math.hypot(v.x, v.y, v.z) || 1;
-  return { x: v.x / mag, y: v.y / mag, z: v.z / mag };
-};
-const angleBetween = (a, b) => Math.acos(Math.max(-1, Math.min(1, vecDot(a, b))));
-
-const TIP_PAIR_LABELS = ['index and middle', 'middle and ring', 'ring and pinky', 'thumb and index'];
-const THUMB_TARGETS = ['index', 'middle', 'ring', 'pinky'];
-
-/**
- * Geometry that finger extension alone cannot express: R, U and V all have the
- * index and middle extended and differ only in spacing and crossing.
- * Distances are in hand-lengths, angles in radians.
- */
-function handConfiguration(frame) {
-  const tipPairs = [
-    pointDistance(frame[8], frame[12]),
-    pointDistance(frame[12], frame[16]),
-    pointDistance(frame[16], frame[20]),
-    pointDistance(frame[4], frame[8]),
-  ];
-
-  const direction = (mcp, tip) => vecUnit(vecSub(frame[tip], frame[mcp]));
-  const dIndex = direction(5, 8);
-  const dMiddle = direction(9, 12);
-  const dRing = direction(13, 16);
-  const dPinky = direction(17, 20);
-
-  const splay = [
-    angleBetween(dIndex, dMiddle),
-    angleBetween(dMiddle, dRing),
-    angleBetween(dRing, dPinky),
-  ];
-
-  // Signed volume flips when the index and middle fingers swap sides of the palm.
-  const palmNormal = vecUnit(vecCross(vecSub(frame[5], frame[0]), vecSub(frame[17], frame[0])));
-  const crossing = vecDot(vecCross(dIndex, dMiddle), palmNormal);
-
-  const thumbDists = [
-    pointDistance(frame[4], frame[8]),
-    pointDistance(frame[4], frame[12]),
-    pointDistance(frame[4], frame[16]),
-    pointDistance(frame[4], frame[20]),
-  ];
-
-  return { tipPairs, splay, crossing, thumbDists };
-}
-
-function meanHandConfiguration(frames) {
-  if (!frames?.length) return null;
-  const tipPairs = [0, 0, 0, 0];
-  const splay = [0, 0, 0];
-  const thumbDists = [0, 0, 0, 0];
-  let crossing = 0;
-  frames.forEach((frame) => {
-    const config = handConfiguration(frame);
-    config.tipPairs.forEach((v, i) => { tipPairs[i] += v; });
-    config.splay.forEach((v, i) => { splay[i] += v; });
-    config.thumbDists.forEach((v, i) => { thumbDists[i] += v; });
-    crossing += config.crossing;
-  });
-  const n = frames.length;
-  return {
-    tipPairs: tipPairs.map((v) => v / n),
-    splay: splay.map((v) => v / n),
-    thumbDists: thumbDists.map((v) => v / n),
-    crossing: crossing / n,
-  };
-}
-
-const meanAbsoluteScore = (refArr, capArr, tolerance) => {
-  const diffs = refArr.map((value, i) => Math.abs(value - capArr[i]));
-  return clamp01(1 - (diffs.reduce((a, b) => a + b, 0) / diffs.length) / tolerance);
-};
-
-const argMin = (values) => values.reduce((best, v, i) => (v < values[best] ? i : best), 0);
-
-function calculateSimilarity(liveNorm, refNorm) {
-  if (!liveNorm || !refNorm) return 0;
-
-  let totalDist = 0;
-  for (let i = 0; i < 21; i += 1) {
-    const dx = liveNorm[i].x - refNorm[i].x;
-    const dy = liveNorm[i].y - refNorm[i].y;
-    const dz = liveNorm[i].z - refNorm[i].z;
-    totalDist += Math.hypot(dx, dy, dz);
-  }
-
-  const avgDist = totalDist / 21;
-  return Math.max(0, Math.min(1, 1 - avgDist / SHAPE_DISTANCE_TOLERANCE));
-}
-
-/**
- * Reduce sensor jitter with a sliding-window frame average.
- */
-function smoothFrames(frames, windowSize = 3) {
-  if (frames.length <= windowSize) return frames;
-  const half = Math.floor(windowSize / 2);
-  return frames.map((_, i) => {
-    const start = Math.max(0, i - half);
-    const end = Math.min(frames.length - 1, i + half);
-    const count = end - start + 1;
-    const avg = frames[start].map(() => ({ x: 0, y: 0, z: 0 }));
-    for (let k = start; k <= end; k++) {
-      frames[k].forEach((pt, j) => {
-        avg[j].x += pt.x / count;
-        avg[j].y += pt.y / count;
-        avg[j].z += pt.z / count;
-      });
-    }
-    return avg;
-  });
-}
-
-/**
- * Dynamic Time Warping similarity (0–1) with a Sakoe-Chiba band.
- * The band stops one held frame from stretching across an entire moving
- * reference, and cost is divided by real path length so long warps are not
- * rewarded the way a fixed (n + m) divisor did.
- */
-function dtwSimilarity(seq1, seq2, frameCost) {
-  const n = seq1.length;
-  const m = seq2.length;
-  if (n === 0 || m === 0) return 0;
-
-  const band = Math.max(4, Math.ceil(Math.max(n, m) * DTW_BAND_RATIO));
-  const INF = 1e9;
-  let prevCost = new Float32Array(m + 1).fill(INF);
-  let prevSteps = new Float32Array(m + 1);
-  prevCost[0] = 0;
-
-  for (let i = 1; i <= n; i++) {
-    const curCost = new Float32Array(m + 1).fill(INF);
-    const curSteps = new Float32Array(m + 1);
-    const lo = Math.max(1, i - band);
-    const hi = Math.min(m, i + band);
-    for (let j = lo; j <= hi; j++) {
-      const cost = frameCost(seq1[i - 1], seq2[j - 1]);
-      let best = prevCost[j];
-      let bestSteps = prevSteps[j];
-      if (curCost[j - 1] < best) { best = curCost[j - 1]; bestSteps = curSteps[j - 1]; }
-      if (prevCost[j - 1] < best) { best = prevCost[j - 1]; bestSteps = prevSteps[j - 1]; }
-      curCost[j] = cost + best;
-      curSteps[j] = bestSteps + 1;
-    }
-    prevCost = curCost;
-    prevSteps = curSteps;
-  }
-
-  if (prevCost[m] >= INF) return 0;
-  const steps = prevSteps[m] || 1;
-  return Math.max(0, 1 - prevCost[m] / steps);
-}
-
-const shapeFrameCost = (a, b) => 1 - calculateSimilarity(a, b);
-const motionFrameCost = (a, b) => Math.min(1, pointDistance(a, b) / MOTION_DISTANCE_TOLERANCE);
-
-/**
- * Compare a captured sequence to a reference sequence.
- * Applies temporal smoothing then DTW.
- */
-function compareSequences(captured, reference) {
-  return dtwSimilarity(smoothFrames(captured, 3), smoothFrames(reference, 3), shapeFrameCost);
-}
-
-/**
- * Scores one hand across the enabled matching features and returns notes
- * explaining what was off. Weights are renormalized over whichever features are
- * enabled and have data, so toggling one off never skews the scale.
- */
-function analyzeHand(refFrames, refMotion, capFrames, capMotion, features = DEFAULT_MATCH_FEATURES) {
-  const notes = [];
-  const parts = [];
-  let scoreCap = 1;
-
-  const contribute = (key, score, weight) => {
-    if (features[key] === false) return;
-    parts.push({ score, weight });
-  };
-
-  const shape = compareSequences(capFrames, refFrames);
-  contribute('shape', shape, MATCH_WEIGHTS.shape);
-
-  const refExt = meanFingerExtensions(refFrames);
-  const capExt = meanFingerExtensions(capFrames);
-  if (refExt && capExt) {
-    const diffs = refExt.map((value, i) => Math.abs(value - capExt[i]));
-    const extensionScore = clamp01(1 - (diffs.reduce((a, b) => a + b, 0) / diffs.length) / FINGER_TOLERANCE);
-    contribute('extension', extensionScore, MATCH_WEIGHTS.extension);
-    if (features.extension !== false) {
-      FINGERS.forEach((finger, i) => {
-        const refOut = refExt[i] >= FINGER_EXTENDED;
-        const capOut = capExt[i] >= FINGER_EXTENDED;
-        if (refOut !== capOut && diffs[i] > 0.12) {
-          notes.push(`${finger.name} should be ${refOut ? 'extended' : 'curled in'}.`);
-        }
-      });
-    }
-  }
-
-  const refConfig = meanHandConfiguration(refFrames);
-  const capConfig = meanHandConfiguration(capFrames);
-  if (refConfig && capConfig) {
-    const tipScore = meanAbsoluteScore(refConfig.tipPairs, capConfig.tipPairs, TIP_PAIR_TOLERANCE);
-    contribute('tipPairs', tipScore, MATCH_WEIGHTS.tipPairs);
-    if (features.tipPairs !== false) {
-      refConfig.tipPairs.forEach((refGap, i) => {
-        const capGap = capConfig.tipPairs[i];
-        if (Math.abs(refGap - capGap) > TIP_PAIR_NOTE_DELTA) {
-          notes.push(
-            capGap > refGap
-              ? `Keep your ${TIP_PAIR_LABELS[i]} fingers closer together.`
-              : `Spread your ${TIP_PAIR_LABELS[i]} fingers further apart.`
-          );
-        }
-      });
-    }
-
-    const splayScore = meanAbsoluteScore(refConfig.splay, capConfig.splay, SPLAY_TOLERANCE);
-    contribute('splay', splayScore, MATCH_WEIGHTS.splay);
-    if (features.splay !== false && splayScore < 0.5) {
-      notes.push('Finger spread differs from your baseline.');
-    }
-
-    const crossDelta = Math.abs(refConfig.crossing - capConfig.crossing);
-    const crossingScore = clamp01(1 - crossDelta / CROSSING_TOLERANCE);
-    contribute('crossing', crossingScore, MATCH_WEIGHTS.crossing);
-    if (features.crossing !== false) {
-      const refCrossed = refConfig.crossing < -CROSSING_DEADZONE;
-      const capCrossed = capConfig.crossing < -CROSSING_DEADZONE;
-      if (refCrossed !== capCrossed) {
-        notes.push(refCrossed
-          ? 'Cross your index and middle fingers.'
-          : 'Your index and middle fingers should not be crossed.');
-        scoreCap = Math.min(scoreCap, CROSSING_FAIL_CAP);
-      }
-    }
-
-    const thumbScore = meanAbsoluteScore(refConfig.thumbDists, capConfig.thumbDists, THUMB_TOLERANCE);
-    contribute('thumb', thumbScore, MATCH_WEIGHTS.thumb);
-    if (features.thumb !== false) {
-      const refNearest = argMin(refConfig.thumbDists);
-      const capNearest = argMin(capConfig.thumbDists);
-      if (refNearest !== capNearest && thumbScore < 0.75) {
-        notes.push(`Thumb should sit nearest your ${THUMB_TARGETS[refNearest]} finger.`);
-      }
-    }
-  }
-
-  const refPoints = normalizeMotion(refMotion);
-  const capPoints = normalizeMotion(capMotion);
-  let motionScore = null;
-
-  if (refPoints && capPoints && refPoints.length > 1 && capPoints.length > 1) {
-    const refFeat = motionFeatures(refPoints);
-    const capFeat = motionFeatures(capPoints);
-    const refDynamic = refFeat.path >= MOTION_DYNAMIC_PATH;
-    const motionEnabled = features.motion !== false;
-
-    if (refDynamic) {
-      const travelRatio = clamp01(capFeat.path / refFeat.path);
-      const pathScore = travelRatio >= 0.55 ? 1 : travelRatio / 0.55;
-      const shapeOfPath = dtwSimilarity(capPoints, refPoints, motionFrameCost);
-      motionScore = 0.5 * pathScore + 0.5 * shapeOfPath;
-
-      if (motionEnabled) {
-        if (travelRatio < 0.45) {
-          notes.push('This sign needs movement — your hand stayed too still.');
-          scoreCap = Math.min(scoreCap, MOTION_FAIL_CAP);
-        } else if (refFeat.rangeX > refFeat.rangeY * 1.6 && capFeat.rangeX < refFeat.rangeX * 0.5) {
-          notes.push('Expected more side-to-side movement.');
-          scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
-        } else if (refFeat.rangeY > refFeat.rangeX * 1.6 && capFeat.rangeY < refFeat.rangeY * 0.5) {
-          notes.push('Expected more up-and-down movement.');
-          scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
-        } else if (shapeOfPath < 0.6) {
-          notes.push('Movement path differs from your baseline.');
-        }
-      }
-    } else {
-      const excess = capFeat.path - Math.max(refFeat.path, MOTION_DYNAMIC_PATH * 0.5);
-      motionScore = excess <= 0 ? 1 : clamp01(1 - excess / MOTION_DYNAMIC_PATH);
-      if (motionEnabled && motionScore < 0.7) {
-        notes.push('Hold this sign steadier — it should not travel.');
-        if (motionScore < 0.5) scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
-      }
-    }
-    contribute('motion', motionScore, MATCH_WEIGHTS.motion);
-  }
-
-  if (features.shape !== false && shape < 0.6) notes.push('Handshape differs from your baseline.');
-
-  const totalWeight = parts.reduce((sum, p) => sum + p.weight, 0);
-  const weighted = totalWeight > 0
-    ? parts.reduce((sum, p) => sum + p.score * p.weight, 0) / totalWeight
-    : shape;
-
-  return {
-    score: Math.min(clamp01(weighted), scoreCap),
-    notes,
-    hadMotionData: motionScore !== null,
-  };
-}
-
-function hasRecordedBaseline(reference) {
-  return Boolean(reference?.frames || reference?.frames2);
-}
-
-const STATS_RANGE_OPTIONS = [3, 7, 14, 30, 90];
-
-// Red at low scores through amber to green at high scores; each bar is one solid step.
-function proficiencyBarClass(value) {
-  if (value >= 0.8) return 'bg-emerald-500';
-  if (value >= 0.65) return 'bg-lime-500';
-  if (value >= 0.5) return 'bg-amber-400';
-  if (value >= 0.3) return 'bg-orange-500';
-  return 'bg-rose-500';
-}
-
-function proficiencyTextClass(value) {
-  if (value >= 0.8) return 'text-emerald-500';
-  if (value >= 0.65) return 'text-lime-600';
-  if (value >= 0.5) return 'text-amber-500';
-  if (value >= 0.3) return 'text-orange-500';
-  return 'text-rose-500';
-}
-
-/**
- * Anki-style weighted random: words with lower recent accuracy get higher probability.
- */
-function selectNextRandomIndex(currentIdx, words, historyEntries) {
-  if (words.length <= 1) return 0;
-  const eligible = words.map((_, i) => i).filter((i) => i !== currentIdx);
-  if (eligible.length === 0) return currentIdx;
-  const scores = eligible.map((i) => {
-    const entries = historyEntries
-      .filter((h) => h.word === words[i])
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, 10);
-    if (entries.length === 0) return 2.0; // unreviewed = high priority
-    const correct = entries.filter((h) => h.status === 'correct').length;
-    return (1 - correct / entries.length) + 0.15; // min 0.15 so all words have a chance
-  });
-  const total = scores.reduce((a, b) => a + b, 0);
-  let r = Math.random() * total;
-  for (let j = 0; j < eligible.length; j++) {
-    r -= scores[j];
-    if (r <= 0) return eligible[j];
-  }
-  return eligible[eligible.length - 1];
-}
+import {
+  PRESETS, READY_BUFFER_MS, RECORDING_DURATION_MS, SEQUENCE_PASS_THRESHOLD,
+  TUTORIAL_STORAGE_KEY, SETTINGS_STORAGE_KEY, STATS_RANGE_OPTIONS, TUTORIAL_STEPS,
+  MATCH_FEATURE_LIST, DEFAULT_MATCH_FEATURES, readMatchFeatures,
+} from './lib/constants';
+import {
+  normalizeLandmarks, motionSample, faceReference, analyzeHand, hasRecordedBaseline,
+  calculateSimilarity, BODY_ZONES,
+} from './lib/handAnalysis';
+import { sanitizeImport, isPlainRecord, MAX_IMPORT_BYTES } from './lib/backup';
+import { proficiencyBarClass, proficiencyTextClass, selectNextRandomIndex } from './lib/stats';
+
+const FACE_DETECT_INTERVAL = 5; // run face detection every Nth frame
 
 export default function App() {
   const [view, setView] = useState('landing');
@@ -721,6 +116,8 @@ export default function App() {
   const [cameraLost, setCameraLost] = useState(false);
   const [matchFeatures, setMatchFeatures] = useState(DEFAULT_MATCH_FEATURES);
   const [showMatchFeatures, setShowMatchFeatures] = useState(false);
+  const [showFaceGuide, setShowFaceGuide] = useState(false);
+  const [faceBox, setFaceBox] = useState(null);
   const [practiceOrder, setPracticeOrder] = useState('ordered');
   const [showAllBaselinesModal, setShowAllBaselinesModal] = useState(false);
   const [showPracticeWithMissingModal, setShowPracticeWithMissingModal] = useState(false);
@@ -749,6 +146,9 @@ export default function App() {
   const streamRef = useRef(null);
   const restartCameraRef = useRef(null);
   const handLandmarkerRef = useRef(null);
+  const faceDetectorRef = useRef(null);
+  const faceRefValue = useRef(null);
+  const faceFrameCounterRef = useRef(0);
   const rafRef = useRef(null);
   const bufferTimeoutRef = useRef(null);
   const bufferIntervalRef = useRef(null);
@@ -1593,6 +993,8 @@ export default function App() {
     lastVideoTimeRef.current = -1;
     setHandsDetected(false);
     setLiveLandmarks([]);
+    faceRefValue.current = null;
+    setFaceBox(null);
     setLastInferenceMs(0);
     setLiveSimilarity(0);
     pushDebugLog('Interpreter stopped.');
@@ -1626,6 +1028,21 @@ export default function App() {
         minTrackingConfidence: 0.35
       });
 
+      // Face detection is optional; body-position scoring is skipped if it fails to load.
+      try {
+        faceDetectorRef.current = await FaceDetector.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.task'
+          },
+          runningMode: 'VIDEO',
+          minDetectionConfidence: 0.4,
+        });
+      } catch (faceError) {
+        faceDetectorRef.current = null;
+        pushDebugLog(`Face detector unavailable: ${faceError?.message || 'unknown error'}`);
+      }
+
       setEngineReady(true);
       pushDebugLog('MediaPipe initialized successfully.');
     } catch (error) {
@@ -1657,6 +1074,23 @@ export default function App() {
           const results = handLandmarkerRef.current.detectForVideo(video, performance.now());
           const ref = activeReferenceRef.current;
 
+          // Faces move far slower than hands, so detect on a subset of frames.
+          faceFrameCounterRef.current += 1;
+          if (faceDetectorRef.current && faceFrameCounterRef.current % FACE_DETECT_INTERVAL === 0) {
+            try {
+              const faceResults = faceDetectorRef.current.detectForVideo(video, performance.now());
+              faceRefValue.current = faceReference(
+                faceResults?.detections?.[0],
+                video.videoWidth,
+                video.videoHeight
+              );
+              setFaceBox(faceRefValue.current);
+            } catch {
+              faceRefValue.current = null;
+            }
+          }
+          const face = faceRefValue.current;
+
           // Slot hands by handedness: Left → h1 (slot 0), Right → h2 (slot 1)
           const handSlots = [null, null];
           for (let i = 0; i < (results.landmarks?.length || 0); i++) {
@@ -1677,12 +1111,12 @@ export default function App() {
             if (isActiveRecordingRef.current) {
               if (normH1) {
                 recordingFramesRef.current.h1.push(normH1);
-                const sample = motionSample(rawH1);
+                const sample = motionSample(rawH1, face);
                 if (sample) recordingFramesRef.current.m1.push(sample);
               }
               if (normH2) {
                 recordingFramesRef.current.h2.push(normH2);
-                const sample = motionSample(rawH2);
+                const sample = motionSample(rawH2, face);
                 if (sample) recordingFramesRef.current.m2.push(sample);
               }
             }
@@ -1792,6 +1226,7 @@ export default function App() {
         if (typeof parsed.isDarkMode === 'boolean') setIsDarkMode(parsed.isDarkMode);
         if (typeof parsed.isMirrored === 'boolean') setIsMirrored(parsed.isMirrored);
         if (typeof parsed.showHandNodes === 'boolean') setShowHandNodes(parsed.showHandNodes);
+        if (typeof parsed.showFaceGuide === 'boolean') setShowFaceGuide(parsed.showFaceGuide);
         if (typeof parsed.showDebugLog === 'boolean') setShowDebugLog(parsed.showDebugLog);
         if (typeof parsed.lastBackupAt === 'number') setLastBackupAt(parsed.lastBackupAt);
         if (isPlainRecord(parsed.matchFeatures)) setMatchFeatures(readMatchFeatures(parsed.matchFeatures));
@@ -1809,12 +1244,13 @@ export default function App() {
       isDarkMode,
       isMirrored,
       showHandNodes,
+      showFaceGuide,
       showDebugLog,
       lastBackupAt,
       matchFeatures,
     };
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
-  }, [isDarkMode, isMirrored, showHandNodes, showDebugLog, lastBackupAt, matchFeatures, settingsHydrated]);
+  }, [isDarkMode, isMirrored, showHandNodes, showFaceGuide, showDebugLog, lastBackupAt, matchFeatures, settingsHydrated]);
 
   useEffect(() => {
     const handleStorage = (event) => {
@@ -1824,6 +1260,7 @@ export default function App() {
         if (typeof parsed.isDarkMode === 'boolean') setIsDarkMode(parsed.isDarkMode);
         if (typeof parsed.isMirrored === 'boolean') setIsMirrored(parsed.isMirrored);
         if (typeof parsed.showHandNodes === 'boolean') setShowHandNodes(parsed.showHandNodes);
+        if (typeof parsed.showFaceGuide === 'boolean') setShowFaceGuide(parsed.showFaceGuide);
         if (typeof parsed.showDebugLog === 'boolean') setShowDebugLog(parsed.showDebugLog);
         if (typeof parsed.lastBackupAt === 'number') setLastBackupAt(parsed.lastBackupAt);
         if (isPlainRecord(parsed.matchFeatures)) setMatchFeatures(readMatchFeatures(parsed.matchFeatures));
@@ -2306,6 +1743,36 @@ export default function App() {
               </div>
             ) : null}
 
+            {/* Face zone guide */}
+            {showFaceGuide && faceBox ? (
+              <div className="pointer-events-none absolute inset-0">
+                <div
+                  className="absolute rounded-md border-2 border-sky-400/80"
+                  style={{
+                    left: `${(isMirrored ? 1 - faceBox.left - faceBox.width : faceBox.left) * 100}%`,
+                    top: `${faceBox.top * 100}%`,
+                    width: `${faceBox.width * 100}%`,
+                    height: `${faceBox.height * 100}%`,
+                  }}
+                />
+                {BODY_ZONES.map((zone) => {
+                  const y = faceBox.top + zone.max * faceBox.height;
+                  if (!Number.isFinite(y) || y > 1.2) return null;
+                  return (
+                    <div
+                      key={zone.key}
+                      className="absolute left-0 right-0 border-t border-dashed border-sky-300/60"
+                      style={{ top: `${y * 100}%` }}
+                    >
+                      <span className="absolute right-1 -top-4 rounded bg-sky-500/80 px-1 text-[9px] font-bold uppercase tracking-wide text-white">
+                        {zone.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
             {/* Camera initializing overlay */}
             {engineLoading ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/80">
@@ -2592,6 +2059,21 @@ export default function App() {
                 </span>
                 <span className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${showHandNodes ? 'bg-indigo-600' : 'bg-slate-300'}`}>
                   <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${showHandNodes ? 'translate-x-6' : 'translate-x-1'}`} />
+                </span>
+              </button>
+
+              <button
+                onClick={() => setShowFaceGuide((prev) => !prev)}
+                role="switch"
+                aria-checked={showFaceGuide}
+                className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
+              >
+                <span className="flex items-center gap-2 text-sm font-semibold">
+                  <User className="h-4 w-4" />
+                  <span>Show Body Zone Guide</span>
+                </span>
+                <span className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${showFaceGuide ? 'bg-indigo-600' : 'bg-slate-300'}`}>
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${showFaceGuide ? 'translate-x-6' : 'translate-x-1'}`} />
                 </span>
               </button>
 

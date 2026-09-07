@@ -53,6 +53,11 @@ function baselinePath(uid, refKey, slot) {
 
 // ── Upload ────────────────────────────────────────────────────────────────────
 
+const packMotion = (samples) => samples.map((s) => ({
+  x: s.x, y: s.y, z: s.z, s: s.s,
+  ...(Number.isFinite(s.b) ? { b: s.b } : {}),
+}));
+
 export async function uploadBaseline(uid, refKey, frames, frames2, timestamp, motion, motion2) {
   if (!firestore || !storage) return;
   const uploads = [];
@@ -65,8 +70,8 @@ export async function uploadBaseline(uid, refKey, frames, frames2, timestamp, mo
     hasH1: !!frames,
     hasH2: !!frames2,
     // Wrist trajectories are small enough to live in the doc itself.
-    ...(motion ? { motion: motion.map((s) => ({ x: s.x, y: s.y, z: s.z, s: s.s })) } : {}),
-    ...(motion2 ? { motion2: motion2.map((s) => ({ x: s.x, y: s.y, z: s.z, s: s.s })) } : {}),
+    ...(motion ? { motion: packMotion(motion) } : {}),
+    ...(motion2 ? { motion2: packMotion(motion2) } : {}),
     updatedAt: timestamp ?? Date.now(),
   });
 }
