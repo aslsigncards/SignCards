@@ -6,6 +6,7 @@ import { db } from './db';
 import {
   ArrowRight,
   Camera,
+  CameraOff,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -69,6 +70,40 @@ const FINGER_TOLERANCE = 0.28; // mean extension difference before the finger sc
 const DTW_BAND_RATIO = 0.3; // Sakoe-Chiba warping band as a fraction of sequence length
 const MOTION_FAIL_CAP = 0.5; // ceiling when a dynamic sign was performed static
 const MOTION_PARTIAL_CAP = 0.64; // ceiling when movement is present but clearly wrong
+const TIP_PAIR_TOLERANCE = 0.5; // hand-lengths of fingertip gap difference before scoring 0
+const TIP_PAIR_NOTE_DELTA = 0.22; // gap difference that earns a spacing note
+const SPLAY_TOLERANCE = 0.5; // radians of splay difference before scoring 0
+const CROSSING_TOLERANCE = 0.6; // signed-volume difference before scoring 0
+const CROSSING_DEADZONE = 0.15; // near-parallel fingers (U) sit near zero; keep margin before calling it crossed
+const CROSSING_FAIL_CAP = 0.6; // ceiling when fingers are crossed the wrong way
+const THUMB_TOLERANCE = 0.6; // hand-lengths of thumb-distance difference before scoring 0
+
+// Relative influence of each matching feature; renormalized over enabled features.
+const MATCH_WEIGHTS = {
+  shape: 0.35,
+  motion: 0.22,
+  extension: 0.15,
+  tipPairs: 0.1,
+  splay: 0.07,
+  crossing: 0.06,
+  thumb: 0.05,
+};
+
+const MATCH_FEATURE_LIST = [
+  { key: 'shape', label: 'Handshape (DTW)', description: 'Overall landmark match across the whole sign.' },
+  { key: 'motion', label: 'Movement path', description: 'Requires dynamic signs to actually move, and static signs to stay put.' },
+  { key: 'extension', label: 'Finger extension', description: 'Whether each finger is extended or curled in.' },
+  { key: 'tipPairs', label: 'Fingertip spacing', description: 'Gaps between neighbouring fingertips. Separates U from V.' },
+  { key: 'splay', label: 'Splay angles', description: 'Angles between finger directions.' },
+  { key: 'crossing', label: 'Finger crossing', description: 'Detects crossed index and middle fingers, as in R.' },
+  { key: 'thumb', label: 'Thumb position', description: 'Which finger the thumb sits nearest. Separates A, S, T, M and N.' },
+];
+
+const DEFAULT_MATCH_FEATURES = Object.fromEntries(MATCH_FEATURE_LIST.map((f) => [f.key, true]));
+
+const readMatchFeatures = (stored) => Object.fromEntries(
+  MATCH_FEATURE_LIST.map((f) => [f.key, stored?.[f.key] !== false])
+);
 const TUTORIAL_STORAGE_KEY = 'asl-signcards-tutorial-seen-v1';
 const SETTINGS_STORAGE_KEY = 'asl-signcards-settings-v1';
 const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
@@ -277,6 +312,90 @@ function meanFingerExtensions(frames) {
   return sums.map((sum) => sum / frames.length);
 }
 
+const vecSub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
+const vecDot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+const vecCross = (a, b) => ({
+  x: a.y * b.z - a.z * b.y,
+  y: a.z * b.x - a.x * b.z,
+  z: a.x * b.y - a.y * b.x,
+});
+const vecUnit = (v) => {
+  const mag = Math.hypot(v.x, v.y, v.z) || 1;
+  return { x: v.x / mag, y: v.y / mag, z: v.z / mag };
+};
+const angleBetween = (a, b) => Math.acos(Math.max(-1, Math.min(1, vecDot(a, b))));
+
+const TIP_PAIR_LABELS = ['index and middle', 'middle and ring', 'ring and pinky', 'thumb and index'];
+const THUMB_TARGETS = ['index', 'middle', 'ring', 'pinky'];
+
+/**
+ * Geometry that finger extension alone cannot express: R, U and V all have the
+ * index and middle extended and differ only in spacing and crossing.
+ * Distances are in hand-lengths, angles in radians.
+ */
+function handConfiguration(frame) {
+  const tipPairs = [
+    pointDistance(frame[8], frame[12]),
+    pointDistance(frame[12], frame[16]),
+    pointDistance(frame[16], frame[20]),
+    pointDistance(frame[4], frame[8]),
+  ];
+
+  const direction = (mcp, tip) => vecUnit(vecSub(frame[tip], frame[mcp]));
+  const dIndex = direction(5, 8);
+  const dMiddle = direction(9, 12);
+  const dRing = direction(13, 16);
+  const dPinky = direction(17, 20);
+
+  const splay = [
+    angleBetween(dIndex, dMiddle),
+    angleBetween(dMiddle, dRing),
+    angleBetween(dRing, dPinky),
+  ];
+
+  // Signed volume flips when the index and middle fingers swap sides of the palm.
+  const palmNormal = vecUnit(vecCross(vecSub(frame[5], frame[0]), vecSub(frame[17], frame[0])));
+  const crossing = vecDot(vecCross(dIndex, dMiddle), palmNormal);
+
+  const thumbDists = [
+    pointDistance(frame[4], frame[8]),
+    pointDistance(frame[4], frame[12]),
+    pointDistance(frame[4], frame[16]),
+    pointDistance(frame[4], frame[20]),
+  ];
+
+  return { tipPairs, splay, crossing, thumbDists };
+}
+
+function meanHandConfiguration(frames) {
+  if (!frames?.length) return null;
+  const tipPairs = [0, 0, 0, 0];
+  const splay = [0, 0, 0];
+  const thumbDists = [0, 0, 0, 0];
+  let crossing = 0;
+  frames.forEach((frame) => {
+    const config = handConfiguration(frame);
+    config.tipPairs.forEach((v, i) => { tipPairs[i] += v; });
+    config.splay.forEach((v, i) => { splay[i] += v; });
+    config.thumbDists.forEach((v, i) => { thumbDists[i] += v; });
+    crossing += config.crossing;
+  });
+  const n = frames.length;
+  return {
+    tipPairs: tipPairs.map((v) => v / n),
+    splay: splay.map((v) => v / n),
+    thumbDists: thumbDists.map((v) => v / n),
+    crossing: crossing / n,
+  };
+}
+
+const meanAbsoluteScore = (refArr, capArr, tolerance) => {
+  const diffs = refArr.map((value, i) => Math.abs(value - capArr[i]));
+  return clamp01(1 - (diffs.reduce((a, b) => a + b, 0) / diffs.length) / tolerance);
+};
+
+const argMin = (values) => values.reduce((best, v, i) => (v < values[best] ? i : best), 0);
+
 function calculateSimilarity(liveNorm, refNorm) {
   if (!liveNorm || !refNorm) return 0;
 
@@ -366,40 +485,98 @@ function compareSequences(captured, reference) {
 }
 
 /**
- * Scores one hand on handshape, wrist trajectory, and per-finger extension,
- * and returns human-readable notes explaining what was off.
- * Baselines recorded before motion capture existed fall back to shape+fingers.
+ * Scores one hand across the enabled matching features and returns notes
+ * explaining what was off. Weights are renormalized over whichever features are
+ * enabled and have data, so toggling one off never skews the scale.
  */
-function analyzeHand(refFrames, refMotion, capFrames, capMotion) {
+function analyzeHand(refFrames, refMotion, capFrames, capMotion, features = DEFAULT_MATCH_FEATURES) {
   const notes = [];
+  const parts = [];
+  let scoreCap = 1;
+
+  const contribute = (key, score, weight) => {
+    if (features[key] === false) return;
+    parts.push({ score, weight });
+  };
+
   const shape = compareSequences(capFrames, refFrames);
+  contribute('shape', shape, MATCH_WEIGHTS.shape);
 
   const refExt = meanFingerExtensions(refFrames);
   const capExt = meanFingerExtensions(capFrames);
-  let fingerScore = 1;
   if (refExt && capExt) {
     const diffs = refExt.map((value, i) => Math.abs(value - capExt[i]));
-    fingerScore = clamp01(1 - (diffs.reduce((a, b) => a + b, 0) / diffs.length) / FINGER_TOLERANCE);
-    FINGERS.forEach((finger, i) => {
-      const refOut = refExt[i] >= FINGER_EXTENDED;
-      const capOut = capExt[i] >= FINGER_EXTENDED;
-      if (refOut !== capOut && diffs[i] > 0.12) {
-        notes.push(`${finger.name} should be ${refOut ? 'extended' : 'curled in'}.`);
+    const extensionScore = clamp01(1 - (diffs.reduce((a, b) => a + b, 0) / diffs.length) / FINGER_TOLERANCE);
+    contribute('extension', extensionScore, MATCH_WEIGHTS.extension);
+    if (features.extension !== false) {
+      FINGERS.forEach((finger, i) => {
+        const refOut = refExt[i] >= FINGER_EXTENDED;
+        const capOut = capExt[i] >= FINGER_EXTENDED;
+        if (refOut !== capOut && diffs[i] > 0.12) {
+          notes.push(`${finger.name} should be ${refOut ? 'extended' : 'curled in'}.`);
+        }
+      });
+    }
+  }
+
+  const refConfig = meanHandConfiguration(refFrames);
+  const capConfig = meanHandConfiguration(capFrames);
+  if (refConfig && capConfig) {
+    const tipScore = meanAbsoluteScore(refConfig.tipPairs, capConfig.tipPairs, TIP_PAIR_TOLERANCE);
+    contribute('tipPairs', tipScore, MATCH_WEIGHTS.tipPairs);
+    if (features.tipPairs !== false) {
+      refConfig.tipPairs.forEach((refGap, i) => {
+        const capGap = capConfig.tipPairs[i];
+        if (Math.abs(refGap - capGap) > TIP_PAIR_NOTE_DELTA) {
+          notes.push(
+            capGap > refGap
+              ? `Keep your ${TIP_PAIR_LABELS[i]} fingers closer together.`
+              : `Spread your ${TIP_PAIR_LABELS[i]} fingers further apart.`
+          );
+        }
+      });
+    }
+
+    const splayScore = meanAbsoluteScore(refConfig.splay, capConfig.splay, SPLAY_TOLERANCE);
+    contribute('splay', splayScore, MATCH_WEIGHTS.splay);
+    if (features.splay !== false && splayScore < 0.5) {
+      notes.push('Finger spread differs from your baseline.');
+    }
+
+    const crossDelta = Math.abs(refConfig.crossing - capConfig.crossing);
+    const crossingScore = clamp01(1 - crossDelta / CROSSING_TOLERANCE);
+    contribute('crossing', crossingScore, MATCH_WEIGHTS.crossing);
+    if (features.crossing !== false) {
+      const refCrossed = refConfig.crossing < -CROSSING_DEADZONE;
+      const capCrossed = capConfig.crossing < -CROSSING_DEADZONE;
+      if (refCrossed !== capCrossed) {
+        notes.push(refCrossed
+          ? 'Cross your index and middle fingers.'
+          : 'Your index and middle fingers should not be crossed.');
+        scoreCap = Math.min(scoreCap, CROSSING_FAIL_CAP);
       }
-    });
+    }
+
+    const thumbScore = meanAbsoluteScore(refConfig.thumbDists, capConfig.thumbDists, THUMB_TOLERANCE);
+    contribute('thumb', thumbScore, MATCH_WEIGHTS.thumb);
+    if (features.thumb !== false) {
+      const refNearest = argMin(refConfig.thumbDists);
+      const capNearest = argMin(capConfig.thumbDists);
+      if (refNearest !== capNearest && thumbScore < 0.75) {
+        notes.push(`Thumb should sit nearest your ${THUMB_TARGETS[refNearest]} finger.`);
+      }
+    }
   }
 
   const refPoints = normalizeMotion(refMotion);
   const capPoints = normalizeMotion(capMotion);
   let motionScore = null;
-  // A weighted average lets a good handshape outvote missing motion entirely,
-  // so a disqualifying movement error caps the score instead of just lowering it.
-  let scoreCap = 1;
 
   if (refPoints && capPoints && refPoints.length > 1 && capPoints.length > 1) {
     const refFeat = motionFeatures(refPoints);
     const capFeat = motionFeatures(capPoints);
     const refDynamic = refFeat.path >= MOTION_DYNAMIC_PATH;
+    const motionEnabled = features.motion !== false;
 
     if (refDynamic) {
       const travelRatio = clamp01(capFeat.path / refFeat.path);
@@ -407,38 +584,43 @@ function analyzeHand(refFrames, refMotion, capFrames, capMotion) {
       const shapeOfPath = dtwSimilarity(capPoints, refPoints, motionFrameCost);
       motionScore = 0.5 * pathScore + 0.5 * shapeOfPath;
 
-      if (travelRatio < 0.45) {
-        notes.push('This sign needs movement — your hand stayed too still.');
-        scoreCap = Math.min(scoreCap, MOTION_FAIL_CAP);
-      } else if (refFeat.rangeX > refFeat.rangeY * 1.6 && capFeat.rangeX < refFeat.rangeX * 0.5) {
-        notes.push('Expected more side-to-side movement.');
-        scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
-      } else if (refFeat.rangeY > refFeat.rangeX * 1.6 && capFeat.rangeY < refFeat.rangeY * 0.5) {
-        notes.push('Expected more up-and-down movement.');
-        scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
-      } else if (shapeOfPath < 0.6) {
-        notes.push('Movement path differs from your baseline.');
+      if (motionEnabled) {
+        if (travelRatio < 0.45) {
+          notes.push('This sign needs movement — your hand stayed too still.');
+          scoreCap = Math.min(scoreCap, MOTION_FAIL_CAP);
+        } else if (refFeat.rangeX > refFeat.rangeY * 1.6 && capFeat.rangeX < refFeat.rangeX * 0.5) {
+          notes.push('Expected more side-to-side movement.');
+          scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
+        } else if (refFeat.rangeY > refFeat.rangeX * 1.6 && capFeat.rangeY < refFeat.rangeY * 0.5) {
+          notes.push('Expected more up-and-down movement.');
+          scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
+        } else if (shapeOfPath < 0.6) {
+          notes.push('Movement path differs from your baseline.');
+        }
       }
     } else {
-      // Static reference: drifting around is also wrong.
       const excess = capFeat.path - Math.max(refFeat.path, MOTION_DYNAMIC_PATH * 0.5);
       motionScore = excess <= 0 ? 1 : clamp01(1 - excess / MOTION_DYNAMIC_PATH);
-      if (motionScore < 0.5) {
+      if (motionEnabled && motionScore < 0.7) {
         notes.push('Hold this sign steadier — it should not travel.');
-        scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
-      } else if (motionScore < 0.7) {
-        notes.push('Hold this sign steadier — it should not travel.');
+        if (motionScore < 0.5) scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
       }
     }
+    contribute('motion', motionScore, MATCH_WEIGHTS.motion);
   }
 
-  if (shape < 0.6) notes.push('Handshape differs from your baseline.');
+  if (features.shape !== false && shape < 0.6) notes.push('Handshape differs from your baseline.');
 
-  const score = motionScore === null
-    ? 0.7 * shape + 0.3 * fingerScore
-    : 0.45 * shape + 0.3 * motionScore + 0.25 * fingerScore;
+  const totalWeight = parts.reduce((sum, p) => sum + p.weight, 0);
+  const weighted = totalWeight > 0
+    ? parts.reduce((sum, p) => sum + p.score * p.weight, 0) / totalWeight
+    : shape;
 
-  return { score: Math.min(clamp01(score), scoreCap), notes, hadMotionData: motionScore !== null };
+  return {
+    score: Math.min(clamp01(weighted), scoreCap),
+    notes,
+    hadMotionData: motionScore !== null,
+  };
 }
 
 function hasRecordedBaseline(reference) {
@@ -535,6 +717,10 @@ export default function App() {
   const [practiceResult, setPracticeResult] = useState(null);
   const [showRecordingInstructions, setShowRecordingInstructions] = useState(false);
   const [videoAspect, setVideoAspect] = useState(null);
+  const [cameraKey, setCameraKey] = useState(0);
+  const [cameraLost, setCameraLost] = useState(false);
+  const [matchFeatures, setMatchFeatures] = useState(DEFAULT_MATCH_FEATURES);
+  const [showMatchFeatures, setShowMatchFeatures] = useState(false);
   const [practiceOrder, setPracticeOrder] = useState('ordered');
   const [showAllBaselinesModal, setShowAllBaselinesModal] = useState(false);
   const [showPracticeWithMissingModal, setShowPracticeWithMissingModal] = useState(false);
@@ -560,6 +746,8 @@ export default function App() {
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
 
   const webcamRef = useRef(null);
+  const streamRef = useRef(null);
+  const restartCameraRef = useRef(null);
   const handLandmarkerRef = useRef(null);
   const rafRef = useRef(null);
   const bufferTimeoutRef = useRef(null);
@@ -634,6 +822,7 @@ export default function App() {
 
   const baselineCount = wordsWithBaseline.length;
   const allBaselinesReady = missingBaselineCount === 0;
+  const enabledMatchCount = MATCH_FEATURE_LIST.filter((f) => matchFeatures[f.key] !== false).length;
 
   activeReferenceRef.current = activeReference || null;
   currentWordRef.current = currentWord || '';
@@ -850,10 +1039,10 @@ export default function App() {
       const capMotionA = mirror ? m2Check : m1Check;
       const capMotionB = mirror ? m1Check : m2Check;
       if (refH1 && refH1.length >= 4 && capA.length >= 8) {
-        results.push(analyzeHand(refH1, ref.motion, capA, capMotionA));
+        results.push(analyzeHand(refH1, ref.motion, capA, capMotionA, matchFeatures));
       }
       if (refH2 && refH2.length >= 4 && capB.length >= 8) {
-        results.push(analyzeHand(refH2, ref.motion2, capB, capMotionB));
+        results.push(analyzeHand(refH2, ref.motion2, capB, capMotionB, matchFeatures));
       }
       const score = results.length
         ? results.reduce((sum, r) => sum + r.score, 0) / results.length
@@ -925,7 +1114,47 @@ export default function App() {
     }, READY_BUFFER_MS);
   };
 
-  const handleUserMedia = () => {
+  const handleCameraLost = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    setCameraLost(true);
+    setVideoAspect(null);
+    if (isInterpreterRunningRef.current) stopInterpreter();
+    pushDebugLog('Camera disconnected.');
+  };
+
+  // react-webcam only calls getUserMedia on mount, so remounting it re-acquires the device.
+  const restartCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (isInterpreterRunningRef.current) stopInterpreter();
+    setVideoAspect(null);
+    setEngineError('');
+    setCameraLost(false);
+    setCameraKey((key) => key + 1);
+    pushDebugLog('Restarting camera...');
+  };
+
+  restartCameraRef.current = restartCamera;
+
+  const handleUserMediaError = (error) => {
+    const message = typeof error === 'string' ? error : (error?.message || 'Camera unavailable.');
+    setCameraLost(true);
+    setEngineError(message);
+    pushDebugLog(`Camera error: ${message}`);
+  };
+
+  const handleUserMedia = (stream) => {
+    streamRef.current = stream ?? null;
+    setCameraLost(false);
+    setEngineError('');
+    stream?.getVideoTracks().forEach((track) => {
+      track.addEventListener('ended', handleCameraLost, { once: true });
+    });
     const trySetAspect = () => {
       const video = webcamRef.current?.video;
       if (video && video.videoWidth > 0 && video.videoHeight > 0) {
@@ -1506,6 +1735,12 @@ export default function App() {
       }
     } else if (video && performance.now() - lastStatsLogAtRef.current > 2500) {
       lastStatsLogAtRef.current = performance.now();
+      const tracks = streamRef.current?.getVideoTracks() ?? [];
+      // Some drivers drop the device without ever firing 'ended'.
+      if (tracks.length && !tracks.some((track) => track.readyState === 'live')) {
+        handleCameraLost();
+        return;
+      }
       pushDebugLog(`Waiting for webcam stream. readyState=${video.readyState}`);
     }
 
@@ -1515,6 +1750,10 @@ export default function App() {
   };
 
   const startInterpreter = async () => {
+    if (cameraLost) {
+      pushDebugLog('Cannot start interpreter: camera is disconnected.');
+      return;
+    }
     await initInterpreter();
     if (!handLandmarkerRef.current) return;
 
@@ -1555,6 +1794,7 @@ export default function App() {
         if (typeof parsed.showHandNodes === 'boolean') setShowHandNodes(parsed.showHandNodes);
         if (typeof parsed.showDebugLog === 'boolean') setShowDebugLog(parsed.showDebugLog);
         if (typeof parsed.lastBackupAt === 'number') setLastBackupAt(parsed.lastBackupAt);
+        if (isPlainRecord(parsed.matchFeatures)) setMatchFeatures(readMatchFeatures(parsed.matchFeatures));
       }
     } catch (error) {
       console.warn('Failed to read persisted settings.', error);
@@ -1571,9 +1811,10 @@ export default function App() {
       showHandNodes,
       showDebugLog,
       lastBackupAt,
+      matchFeatures,
     };
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
-  }, [isDarkMode, isMirrored, showHandNodes, showDebugLog, lastBackupAt, settingsHydrated]);
+  }, [isDarkMode, isMirrored, showHandNodes, showDebugLog, lastBackupAt, matchFeatures, settingsHydrated]);
 
   useEffect(() => {
     const handleStorage = (event) => {
@@ -1585,6 +1826,7 @@ export default function App() {
         if (typeof parsed.showHandNodes === 'boolean') setShowHandNodes(parsed.showHandNodes);
         if (typeof parsed.showDebugLog === 'boolean') setShowDebugLog(parsed.showDebugLog);
         if (typeof parsed.lastBackupAt === 'number') setLastBackupAt(parsed.lastBackupAt);
+        if (isPlainRecord(parsed.matchFeatures)) setMatchFeatures(readMatchFeatures(parsed.matchFeatures));
       } catch (error) {
         console.warn('Failed to sync settings from another tab.', error);
       }
@@ -1671,10 +1913,24 @@ export default function App() {
     return () => {
       clearBufferTimers();
       stopInterpreter();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
       if (handLandmarkerRef.current) {
         handLandmarkerRef.current.close();
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const media = navigator.mediaDevices;
+    if (!media?.addEventListener) return undefined;
+    // Fires on unplug and replug; only re-acquire when the current stream is already dead,
+    // so plugging in unrelated devices never interrupts a working session.
+    const onDeviceChange = () => {
+      const live = streamRef.current?.getVideoTracks().some((track) => track.readyState === 'live');
+      if (!live) restartCameraRef.current?.();
+    };
+    media.addEventListener('devicechange', onDeviceChange);
+    return () => media.removeEventListener('devicechange', onDeviceChange);
   }, []);
 
   useEffect(() => {
@@ -1937,10 +2193,12 @@ export default function App() {
               style={videoAspect ? { aspectRatio: videoAspect } : { width: '100%', height: '100%' }}
             >
             <Webcam
+              key={cameraKey}
               audio={false}
               ref={webcamRef}
               screenshotFormat="image/jpeg"
               onUserMedia={handleUserMedia}
+              onUserMediaError={handleUserMediaError}
               className={`h-full w-full object-cover transition-transform duration-200 ${isMirrored ? 'scale-x-[-1]' : ''}`}
             />
 
@@ -2053,6 +2311,22 @@ export default function App() {
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/80">
                 <LoaderCircle className="h-8 w-8 animate-spin text-white/70" />
                 <p className="mt-3 text-sm font-semibold text-white/70">Initializing camera…</p>
+              </div>
+            ) : null}
+
+            {cameraLost ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/85 p-4 text-center">
+                <CameraOff className="h-8 w-8 text-white/70" />
+                <p className="mt-3 text-sm font-semibold text-white">Camera disconnected</p>
+                <p className="mt-1 max-w-xs text-xs text-white/60">
+                  Reconnect your camera. If it is already plugged back in, tap below to reconnect.
+                </p>
+                <button
+                  onClick={restartCamera}
+                  className="mt-4 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"
+                >
+                  Reconnect Camera
+                </button>
               </div>
             ) : null}
 
@@ -2335,6 +2609,60 @@ export default function App() {
                   <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${showDebugLog ? 'translate-x-6' : 'translate-x-1'}`} />
                 </span>
               </button>
+
+              <div className={`rounded-xl border ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+                <button
+                  onClick={() => setShowMatchFeatures((prev) => !prev)}
+                  aria-expanded={showMatchFeatures}
+                  className={`flex w-full items-center justify-between px-4 py-3 text-left ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}
+                >
+                  <span className="flex items-center gap-2 text-sm font-semibold">
+                    <Zap className="h-4 w-4" />
+                    <span>Sign Matching Features</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${enabledMatchCount === MATCH_FEATURE_LIST.length ? (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-600') : 'bg-amber-500 text-white'}`}>
+                      {enabledMatchCount}/{MATCH_FEATURE_LIST.length}
+                    </span>
+                  </span>
+                  {showMatchFeatures ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+
+                {showMatchFeatures ? (
+                  <div className={`border-t px-4 pb-4 pt-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+                    <p className={`mb-3 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                      Turn individual checks off to isolate problems. Remaining checks are re-weighted automatically, so scores stay on the same scale.
+                    </p>
+                    <div className="space-y-2">
+                      {MATCH_FEATURE_LIST.map((feature) => {
+                        const enabled = matchFeatures[feature.key] !== false;
+                        return (
+                          <button
+                            key={feature.key}
+                            onClick={() => setMatchFeatures((prev) => ({ ...prev, [feature.key]: !enabled }))}
+                            role="switch"
+                            aria-checked={enabled}
+                            className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`}
+                          >
+                            <span className="min-w-0">
+                              <span className={`block text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>{feature.label}</span>
+                              <span className={`block text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-500'}`}>{feature.description}</span>
+                            </span>
+                            <span className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${enabled ? 'bg-indigo-600' : 'bg-slate-300'}`}>
+                              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <button
+                      onClick={() => setMatchFeatures(DEFAULT_MATCH_FEATURES)}
+                      disabled={enabledMatchCount === MATCH_FEATURE_LIST.length}
+                      className={`mt-3 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+                    >
+                      Enable all
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             <div className={`mt-8 border-t pt-6 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
