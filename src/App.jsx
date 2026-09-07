@@ -59,7 +59,16 @@ const PRESETS = {
 const READY_BUFFER_MS = 1500;
 const PASS_THRESHOLD = 0.82; // legacy single-frame fallback
 const RECORDING_DURATION_MS = 1000; // ms to record hand motion
-const SEQUENCE_PASS_THRESHOLD = 0.65; // DTW sequence similarity threshold
+const SEQUENCE_PASS_THRESHOLD = 0.65; // combined shape + motion + finger score
+
+// Matching tuning. Lower tolerances and a tighter band mean stricter grading.
+const SHAPE_DISTANCE_TOLERANCE = 0.45; // normalized units before a frame scores 0
+const MOTION_DISTANCE_TOLERANCE = 1.2; // hand-lengths before a trajectory point scores 0
+const MOTION_DYNAMIC_PATH = 0.6; // wrist travel (hand-lengths) that marks a sign as dynamic
+const FINGER_TOLERANCE = 0.28; // mean extension difference before the finger score hits 0
+const DTW_BAND_RATIO = 0.3; // Sakoe-Chiba warping band as a fraction of sequence length
+const MOTION_FAIL_CAP = 0.5; // ceiling when a dynamic sign was performed static
+const MOTION_PARTIAL_CAP = 0.64; // ceiling when movement is present but clearly wrong
 const TUTORIAL_STORAGE_KEY = 'asl-signcards-tutorial-seen-v1';
 const SETTINGS_STORAGE_KEY = 'asl-signcards-settings-v1';
 const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
@@ -86,6 +95,17 @@ const cleanFrames = (frames) => {
       : null
   );
   return clean.every(Boolean) && clean.length > 0 ? clean : null;
+};
+
+const cleanMotion = (samples) => {
+  if (!Array.isArray(samples)) return null;
+  const clean = samples.slice(0, MAX_FRAMES_PER_SLOT).map((s) => ({
+    x: Number(s?.x) || 0,
+    y: Number(s?.y) || 0,
+    z: Number(s?.z) || 0,
+    s: Number(s?.s) || 1,
+  }));
+  return clean.length ? clean : null;
 };
 
 /**
@@ -123,6 +143,8 @@ function sanitizeImport(parsed) {
       timestamp: Number.isFinite(reference.timestamp) ? reference.timestamp : Date.now(),
       frames: cleanFrames(reference.frames),
       frames2: cleanFrames(reference.frames2),
+      motion: cleanMotion(reference.motion),
+      motion2: cleanMotion(reference.motion2),
     }))
     .filter((reference) => reference.word && (reference.frames || reference.frames2));
 
@@ -146,8 +168,8 @@ const TUTORIAL_STEPS = [
   { selector: '[data-tour="menu"]', title: 'Choose your deck', body: 'Open the menu to switch sets, create custom cards, view stats, or change settings.' },
   { selector: '[data-tour="phase"]', title: 'Build your baseline', body: 'Start in Baseline Setup. Record each sign once so matching is tuned to your hand.' },
   { selector: '[data-tour="camera"]', title: 'Use the camera view', body: 'Keep your signing hand clearly visible. The live hand landmarks show when the camera can see you.' },
-  { selector: '[data-tour="action"]', title: 'Record or check', body: 'Record a baseline first. Once you enter Practice Mode, Check My Sign measures your attempt against it.' },
-  { selector: '[data-tour="more"]', title: 'Adjust your session', body: 'Use the menu for practice mode, mirroring, re-recording baselines, and card navigation.' },
+  { selector: '[data-tour="action"]', title: 'Record or check', body: 'In Baseline Setup this button records your reference sign. In Practice Mode it becomes Check My Sign and scores your attempt against that reference.' },
+  { selector: '[data-tour="more"]', title: 'Switch modes anytime', body: 'This menu moves you between Baseline Setup and Practice Mode, and holds mirroring, re-recording, and card navigation. Open it when you are ready to practice.' },
 ];
 
 function normalizeLandmarks(landmarks) {
@@ -169,6 +191,92 @@ function normalizeLandmarks(landmarks) {
   }));
 }
 
+/**
+ * Wrist position plus hand size, captured before wrist-centering discards it.
+ * Without this, a static hold and a travelling sign look identical.
+ */
+function motionSample(landmarks) {
+  if (!landmarks || landmarks.length !== 21) return null;
+  const wrist = landmarks[0];
+  const midMcp = landmarks[9];
+  const s = Math.hypot(midMcp.x - wrist.x, midMcp.y - wrist.y, midMcp.z - wrist.z) || 1;
+  return { x: wrist.x, y: wrist.y, z: wrist.z, s };
+}
+
+const pointDistance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+const median = (values) => {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+};
+
+const clamp01 = (value) => Math.max(0, Math.min(1, value));
+
+// Expressed in hand-lengths so results are independent of distance from camera.
+function normalizeMotion(samples) {
+  if (!samples?.length) return null;
+  const scale = median(samples.map((s) => s.s)) || 1;
+  const cx = samples.reduce((a, s) => a + s.x, 0) / samples.length;
+  const cy = samples.reduce((a, s) => a + s.y, 0) / samples.length;
+  const cz = samples.reduce((a, s) => a + s.z, 0) / samples.length;
+  return samples.map((s) => ({
+    x: (s.x - cx) / scale,
+    y: (s.y - cy) / scale,
+    z: (s.z - cz) / scale,
+  }));
+}
+
+function motionFeatures(points) {
+  if (!points?.length) return null;
+  let path = 0;
+  for (let i = 1; i < points.length; i++) path += pointDistance(points[i - 1], points[i]);
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  return {
+    path,
+    rangeX: Math.max(...xs) - Math.min(...xs),
+    rangeY: Math.max(...ys) - Math.min(...ys),
+    netX: xs[xs.length - 1] - xs[0],
+    netY: ys[ys.length - 1] - ys[0],
+  };
+}
+
+const FINGERS = [
+  { name: 'Thumb', joints: [1, 2, 3, 4] },
+  { name: 'Index', joints: [5, 6, 7, 8] },
+  { name: 'Middle', joints: [9, 10, 11, 12] },
+  { name: 'Ring', joints: [13, 14, 15, 16] },
+  { name: 'Pinky', joints: [17, 18, 19, 20] },
+];
+
+const FINGER_EXTENDED = 0.82;
+
+/**
+ * Straightness per finger: tip-to-knuckle distance over the summed joint chain.
+ * ~1.0 when the finger is straight, ~0.4 or lower when curled.
+ */
+function fingerExtensions(frame) {
+  return FINGERS.map(({ joints: [a, b, c, d] }) => {
+    const chain =
+      pointDistance(frame[a], frame[b]) +
+      pointDistance(frame[b], frame[c]) +
+      pointDistance(frame[c], frame[d]);
+    if (chain <= 1e-6) return 0;
+    return Math.min(1, pointDistance(frame[a], frame[d]) / chain);
+  });
+}
+
+function meanFingerExtensions(frames) {
+  if (!frames?.length) return null;
+  const sums = [0, 0, 0, 0, 0];
+  frames.forEach((frame) => {
+    fingerExtensions(frame).forEach((value, i) => { sums[i] += value; });
+  });
+  return sums.map((sum) => sum / frames.length);
+}
+
 function calculateSimilarity(liveNorm, refNorm) {
   if (!liveNorm || !refNorm) return 0;
 
@@ -181,7 +289,7 @@ function calculateSimilarity(liveNorm, refNorm) {
   }
 
   const avgDist = totalDist / 21;
-  return Math.max(0, Math.min(1, 1 - avgDist / 0.6));
+  return Math.max(0, Math.min(1, 1 - avgDist / SHAPE_DISTANCE_TOLERANCE));
 }
 
 /**
@@ -207,40 +315,153 @@ function smoothFrames(frames, windowSize = 3) {
 }
 
 /**
- * Dynamic Time Warping similarity between two frame sequences (0–1).
- * Handles speed differences: signs performed faster/slower still score well.
- * Position + scale differences are already removed by normalizeLandmarks.
+ * Dynamic Time Warping similarity (0–1) with a Sakoe-Chiba band.
+ * The band stops one held frame from stretching across an entire moving
+ * reference, and cost is divided by real path length so long warps are not
+ * rewarded the way a fixed (n + m) divisor did.
  */
-function dtwSimilarity(seq1, seq2) {
+function dtwSimilarity(seq1, seq2, frameCost) {
   const n = seq1.length;
   const m = seq2.length;
   if (n === 0 || m === 0) return 0;
 
-  let prevRow = new Float32Array(m + 1).fill(1e9);
-  prevRow[0] = 0;
+  const band = Math.max(4, Math.ceil(Math.max(n, m) * DTW_BAND_RATIO));
+  const INF = 1e9;
+  let prevCost = new Float32Array(m + 1).fill(INF);
+  let prevSteps = new Float32Array(m + 1);
+  prevCost[0] = 0;
 
   for (let i = 1; i <= n; i++) {
-    const curRow = new Float32Array(m + 1).fill(1e9);
-    for (let j = 1; j <= m; j++) {
-      const cost = 1 - calculateSimilarity(seq1[i - 1], seq2[j - 1]);
-      curRow[j] = cost + Math.min(prevRow[j], curRow[j - 1], prevRow[j - 1]);
+    const curCost = new Float32Array(m + 1).fill(INF);
+    const curSteps = new Float32Array(m + 1);
+    const lo = Math.max(1, i - band);
+    const hi = Math.min(m, i + band);
+    for (let j = lo; j <= hi; j++) {
+      const cost = frameCost(seq1[i - 1], seq2[j - 1]);
+      let best = prevCost[j];
+      let bestSteps = prevSteps[j];
+      if (curCost[j - 1] < best) { best = curCost[j - 1]; bestSteps = curSteps[j - 1]; }
+      if (prevCost[j - 1] < best) { best = prevCost[j - 1]; bestSteps = prevSteps[j - 1]; }
+      curCost[j] = cost + best;
+      curSteps[j] = bestSteps + 1;
     }
-    prevRow = curRow;
+    prevCost = curCost;
+    prevSteps = curSteps;
   }
 
-  return Math.max(0, 1 - prevRow[m] / (n + m));
+  if (prevCost[m] >= INF) return 0;
+  const steps = prevSteps[m] || 1;
+  return Math.max(0, 1 - prevCost[m] / steps);
 }
+
+const shapeFrameCost = (a, b) => 1 - calculateSimilarity(a, b);
+const motionFrameCost = (a, b) => Math.min(1, pointDistance(a, b) / MOTION_DISTANCE_TOLERANCE);
 
 /**
  * Compare a captured sequence to a reference sequence.
  * Applies temporal smoothing then DTW.
  */
 function compareSequences(captured, reference) {
-  return dtwSimilarity(smoothFrames(captured, 3), smoothFrames(reference, 3));
+  return dtwSimilarity(smoothFrames(captured, 3), smoothFrames(reference, 3), shapeFrameCost);
+}
+
+/**
+ * Scores one hand on handshape, wrist trajectory, and per-finger extension,
+ * and returns human-readable notes explaining what was off.
+ * Baselines recorded before motion capture existed fall back to shape+fingers.
+ */
+function analyzeHand(refFrames, refMotion, capFrames, capMotion) {
+  const notes = [];
+  const shape = compareSequences(capFrames, refFrames);
+
+  const refExt = meanFingerExtensions(refFrames);
+  const capExt = meanFingerExtensions(capFrames);
+  let fingerScore = 1;
+  if (refExt && capExt) {
+    const diffs = refExt.map((value, i) => Math.abs(value - capExt[i]));
+    fingerScore = clamp01(1 - (diffs.reduce((a, b) => a + b, 0) / diffs.length) / FINGER_TOLERANCE);
+    FINGERS.forEach((finger, i) => {
+      const refOut = refExt[i] >= FINGER_EXTENDED;
+      const capOut = capExt[i] >= FINGER_EXTENDED;
+      if (refOut !== capOut && diffs[i] > 0.12) {
+        notes.push(`${finger.name} should be ${refOut ? 'extended' : 'curled in'}.`);
+      }
+    });
+  }
+
+  const refPoints = normalizeMotion(refMotion);
+  const capPoints = normalizeMotion(capMotion);
+  let motionScore = null;
+  // A weighted average lets a good handshape outvote missing motion entirely,
+  // so a disqualifying movement error caps the score instead of just lowering it.
+  let scoreCap = 1;
+
+  if (refPoints && capPoints && refPoints.length > 1 && capPoints.length > 1) {
+    const refFeat = motionFeatures(refPoints);
+    const capFeat = motionFeatures(capPoints);
+    const refDynamic = refFeat.path >= MOTION_DYNAMIC_PATH;
+
+    if (refDynamic) {
+      const travelRatio = clamp01(capFeat.path / refFeat.path);
+      const pathScore = travelRatio >= 0.55 ? 1 : travelRatio / 0.55;
+      const shapeOfPath = dtwSimilarity(capPoints, refPoints, motionFrameCost);
+      motionScore = 0.5 * pathScore + 0.5 * shapeOfPath;
+
+      if (travelRatio < 0.45) {
+        notes.push('This sign needs movement — your hand stayed too still.');
+        scoreCap = Math.min(scoreCap, MOTION_FAIL_CAP);
+      } else if (refFeat.rangeX > refFeat.rangeY * 1.6 && capFeat.rangeX < refFeat.rangeX * 0.5) {
+        notes.push('Expected more side-to-side movement.');
+        scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
+      } else if (refFeat.rangeY > refFeat.rangeX * 1.6 && capFeat.rangeY < refFeat.rangeY * 0.5) {
+        notes.push('Expected more up-and-down movement.');
+        scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
+      } else if (shapeOfPath < 0.6) {
+        notes.push('Movement path differs from your baseline.');
+      }
+    } else {
+      // Static reference: drifting around is also wrong.
+      const excess = capFeat.path - Math.max(refFeat.path, MOTION_DYNAMIC_PATH * 0.5);
+      motionScore = excess <= 0 ? 1 : clamp01(1 - excess / MOTION_DYNAMIC_PATH);
+      if (motionScore < 0.5) {
+        notes.push('Hold this sign steadier — it should not travel.');
+        scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
+      } else if (motionScore < 0.7) {
+        notes.push('Hold this sign steadier — it should not travel.');
+      }
+    }
+  }
+
+  if (shape < 0.6) notes.push('Handshape differs from your baseline.');
+
+  const score = motionScore === null
+    ? 0.7 * shape + 0.3 * fingerScore
+    : 0.45 * shape + 0.3 * motionScore + 0.25 * fingerScore;
+
+  return { score: Math.min(clamp01(score), scoreCap), notes, hadMotionData: motionScore !== null };
 }
 
 function hasRecordedBaseline(reference) {
   return Boolean(reference?.frames || reference?.frames2);
+}
+
+const STATS_RANGE_OPTIONS = [3, 7, 14, 30, 90];
+
+// Red at low scores through amber to green at high scores; each bar is one solid step.
+function proficiencyBarClass(value) {
+  if (value >= 0.8) return 'bg-emerald-500';
+  if (value >= 0.65) return 'bg-lime-500';
+  if (value >= 0.5) return 'bg-amber-400';
+  if (value >= 0.3) return 'bg-orange-500';
+  return 'bg-rose-500';
+}
+
+function proficiencyTextClass(value) {
+  if (value >= 0.8) return 'text-emerald-500';
+  if (value >= 0.65) return 'text-lime-600';
+  if (value >= 0.5) return 'text-amber-500';
+  if (value >= 0.3) return 'text-orange-500';
+  return 'text-rose-500';
 }
 
 /**
@@ -321,6 +542,8 @@ export default function App() {
   const [tutorialStep, setTutorialStep] = useState(0);
   const [tutorialTargetRect, setTutorialTargetRect] = useState(null);
   const [statsSetKey, setStatsSetKey] = useState(null);
+  const [statsRangeDays, setStatsRangeDays] = useState(14);
+  const [statsSortDir, setStatsSortDir] = useState('weakest');
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -350,7 +573,7 @@ export default function App() {
   const activeReferenceRef = useRef(null);
   const currentWordRef = useRef('');
   const importFileInputRef = useRef(null);
-  const recordingFramesRef = useRef({ h1: [], h2: [] });
+  const recordingFramesRef = useRef({ h1: [], h2: [], m1: [], m2: [] });
   const recordingTotalFramesRef = useRef(0);
   const isActiveRecordingRef = useRef(false);
   const hasShownRecordingInstructionsRef = useRef(false);
@@ -476,7 +699,7 @@ export default function App() {
     }
 
     setIsRecordingReference(true);
-    recordingFramesRef.current = { h1: [], h2: [] };
+    recordingFramesRef.current = { h1: [], h2: [], m1: [], m2: [] };
     recordingTotalFramesRef.current = 0;
     isActiveRecordingRef.current = true;
     setIsActiveRecording(true);
@@ -496,8 +719,10 @@ export default function App() {
 
     const h1Frames = [...recordingFramesRef.current.h1];
     const h2Frames = [...recordingFramesRef.current.h2];
+    const m1Samples = [...recordingFramesRef.current.m1];
+    const m2Samples = [...recordingFramesRef.current.m2];
     const totalFrames = recordingTotalFramesRef.current;
-    recordingFramesRef.current = { h1: [], h2: [] };
+    recordingFramesRef.current = { h1: [], h2: [], m1: [], m2: [] };
     recordingTotalFramesRef.current = 0;
 
     // At least one hand must have been sufficiently present
@@ -518,6 +743,8 @@ export default function App() {
     // Preserve handedness slots directly — Left hand → frames, Right hand → frames2
     const saveH1 = h1Frames.length >= 8 ? h1Frames : null;
     const saveH2 = h2Frames.length >= 8 ? h2Frames : null;
+    const saveM1 = saveH1 && m1Samples.length >= 8 ? m1Samples : null;
+    const saveM2 = saveH2 && m2Samples.length >= 8 ? m2Samples : null;
     const handLabel = saveH1 && saveH2 ? '2-hand' : saveH1 ? 'left' : 'right';
     const currentKey = getReferenceKey(currentWordRef.current);
     await db.references.put({
@@ -525,9 +752,11 @@ export default function App() {
       timestamp: Date.now(),
       frames: saveH1,
       ...(saveH2 ? { frames2: saveH2 } : {}),
+      ...(saveM1 ? { motion: saveM1 } : {}),
+      ...(saveM2 ? { motion2: saveM2 } : {}),
     });
     if (userRef.current) {
-      uploadBaseline(userRef.current.uid, currentKey, saveH1, saveH2, Date.now()).catch(() => {});
+      uploadBaseline(userRef.current.uid, currentKey, saveH1, saveH2, Date.now(), saveM1, saveM2).catch(() => {});
     }
     setIsRecordingReference(false);
     logAnalyticsEvent('baseline_recorded', { word: currentWordRef.current, hand: handLabel, set: currentSetRef.current });
@@ -573,7 +802,7 @@ export default function App() {
       return;
     }
 
-    recordingFramesRef.current = { h1: [], h2: [] };
+    recordingFramesRef.current = { h1: [], h2: [], m1: [], m2: [] };
     recordingTotalFramesRef.current = 0;
     isActiveRecordingRef.current = true;
     setIsActiveRecording(true);
@@ -593,8 +822,10 @@ export default function App() {
 
     const h1Check = [...recordingFramesRef.current.h1];
     const h2Check = [...recordingFramesRef.current.h2];
+    const m1Check = [...recordingFramesRef.current.m1];
+    const m2Check = [...recordingFramesRef.current.m2];
     const totalFrames = recordingTotalFramesRef.current;
-    recordingFramesRef.current = { h1: [], h2: [] };
+    recordingFramesRef.current = { h1: [], h2: [], m1: [], m2: [] };
     recordingTotalFramesRef.current = 0;
 
     const maxCapFrames = Math.max(h1Check.length, h2Check.length);
@@ -612,44 +843,45 @@ export default function App() {
     const refH1 = ref.frames;
     const refH2 = ref.frames2;
 
-    // Regular: left captured vs left reference, right captured vs right reference
-    const simsRegular = [];
-    if (refH1 && refH1.length >= 4 && h1Check.length >= 8) {
-      simsRegular.push(compareSequences(h1Check, refH1));
-    }
-    if (refH2 && refH2.length >= 4 && h2Check.length >= 8) {
-      simsRegular.push(compareSequences(h2Check, refH2));
-    }
+    const scoreHands = (mirror) => {
+      const results = [];
+      const capA = mirror ? h2Check : h1Check;
+      const capB = mirror ? h1Check : h2Check;
+      const capMotionA = mirror ? m2Check : m1Check;
+      const capMotionB = mirror ? m1Check : m2Check;
+      if (refH1 && refH1.length >= 4 && capA.length >= 8) {
+        results.push(analyzeHand(refH1, ref.motion, capA, capMotionA));
+      }
+      if (refH2 && refH2.length >= 4 && capB.length >= 8) {
+        results.push(analyzeHand(refH2, ref.motion2, capB, capMotionB));
+      }
+      const score = results.length
+        ? results.reduce((sum, r) => sum + r.score, 0) / results.length
+        : 0;
+      return { score, results };
+    };
 
-    // Mirror: swap hands — handles signing with the opposite hand
-    const simsMirror = [];
-    if (refH1 && refH1.length >= 4 && h2Check.length >= 8) {
-      simsMirror.push(compareSequences(h2Check, refH1));
-    }
-    if (refH2 && refH2.length >= 4 && h1Check.length >= 8) {
-      simsMirror.push(compareSequences(h1Check, refH2));
-    }
+    const regular = scoreHands(false);
+    const mirrored = scoreHands(true);
+    const usedMirror = mirrored.score > regular.score;
+    const best = usedMirror ? mirrored : regular;
+    const similarity = best.score;
 
-    const simRegular = simsRegular.length > 0 ? simsRegular.reduce((a, b) => a + b, 0) / simsRegular.length : 0;
-    const simMirror = simsMirror.length > 0 ? simsMirror.reduce((a, b) => a + b, 0) / simsMirror.length : 0;
-    const usedMirror = simMirror > simRegular;
-    const similarity = Math.max(simRegular, simMirror);
-    const simsUsed = usedMirror ? simsMirror : simsRegular;
+    const notes = [...new Set(best.results.flatMap((r) => r.notes))].slice(0, 4);
+    const legacyBaseline = best.results.length > 0 && best.results.every((r) => !r.hadMotionData);
+    if (legacyBaseline) {
+      notes.push('Re-record this baseline to enable movement checking.');
+    }
 
     const mirrorTag = usedMirror ? ' [mirrored]' : '';
-    if (simsUsed.length === 2) {
-      pushDebugLog(
-        `DTW check (2-hand${mirrorTag}) for "${currentWordRef.current}": s1=${(simsUsed[0] * 100).toFixed(0)}%, s2=${(simsUsed[1] * 100).toFixed(0)}%, avg=${(similarity * 100).toFixed(0)}% (${similarity >= SEQUENCE_PASS_THRESHOLD ? 'PASS' : 'FAIL'}).`
-      );
-    } else {
-      pushDebugLog(
-        `DTW check${mirrorTag} for "${currentWordRef.current}": ${(similarity * 100).toFixed(0)}% (${similarity >= SEQUENCE_PASS_THRESHOLD ? 'PASS' : 'FAIL'}, ${maxCapFrames} frames).`
-      );
-    }
+    const verdict = similarity >= SEQUENCE_PASS_THRESHOLD ? 'PASS' : 'FAIL';
+    pushDebugLog(
+      `Check${mirrorTag} for "${currentWordRef.current}": ${(similarity * 100).toFixed(0)}% (${verdict}, ${best.results.length} hand(s), ${maxCapFrames} frames)${notes.length ? ` — ${notes.join(' ')}` : ''}`
+    );
 
     const passed = similarity >= SEQUENCE_PASS_THRESHOLD;
     logAnalyticsEvent('practice_check', { word: currentWordRef.current, passed, similarity: Math.round(similarity * 100), set: currentSetRef.current });
-    setPracticeResult({ similarity, passed });
+    setPracticeResult({ similarity, passed, notes });
   };
 
   const startBufferedAction = async (actionType) => {
@@ -1126,7 +1358,7 @@ export default function App() {
     isActiveRecordingRef.current = false;
     setIsActiveRecording(false);
     setActiveRecordingProgress(0);
-    recordingFramesRef.current = { h1: [], h2: [] };
+    recordingFramesRef.current = { h1: [], h2: [], m1: [], m2: [] };
     recordingTotalFramesRef.current = 0;
     stableMatchFramesRef.current = 0;
     lastVideoTimeRef.current = -1;
@@ -1214,8 +1446,16 @@ export default function App() {
             const normH2 = rawH2 ? normalizeLandmarks(rawH2) : null;
             latestNormalizedHandRef.current = normH1 || normH2;
             if (isActiveRecordingRef.current) {
-              if (normH1) recordingFramesRef.current.h1.push(normH1);
-              if (normH2) recordingFramesRef.current.h2.push(normH2);
+              if (normH1) {
+                recordingFramesRef.current.h1.push(normH1);
+                const sample = motionSample(rawH1);
+                if (sample) recordingFramesRef.current.m1.push(sample);
+              }
+              if (normH2) {
+                recordingFramesRef.current.h2.push(normH2);
+                const sample = motionSample(rawH2);
+                if (sample) recordingFramesRef.current.m2.push(sample);
+              }
             }
 
             const normalized = normH1 || normH2;
@@ -1443,7 +1683,7 @@ export default function App() {
     isActiveRecordingRef.current = false;
     setIsActiveRecording(false);
     setActiveRecordingProgress(0);
-    recordingFramesRef.current = { h1: [], h2: [] };
+    recordingFramesRef.current = { h1: [], h2: [], m1: [], m2: [] };
     recordingTotalFramesRef.current = 0;
   }, [appPage]);
 
@@ -1466,6 +1706,16 @@ export default function App() {
     });
     return () => unsub();
   }, []);
+
+  const startTutorial = () => {
+    setView('app');
+    setAppPage('learn');
+    // The tour narrates the baseline-first flow and highlights the learn page controls.
+    if (workflowPhase !== 'baseline') switchToBaseline();
+    setTutorialStep(0);
+    setTutorialTargetRect(null);
+    setShowTutorial(true);
+  };
 
   const closeTutorial = (markSeen = true) => {
     if (markSeen) {
@@ -1640,6 +1890,15 @@ export default function App() {
                     </>
                   )}
                   <div className={`border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`} />
+                  {activeSetOption?.isCustom ? (
+                    <button
+                      onClick={() => { handleEditSet(activeSetOption); setIsOverflowMenuOpen(false); }}
+                      className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50'}`}
+                    >
+                      <Pencil className="h-4 w-4 text-indigo-500" />
+                      Edit Set
+                    </button>
+                  ) : null}
                   <button
                     onClick={() => { setIsMirrored((prev) => !prev); setIsOverflowMenuOpen(false); }}
                     className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50'}`}
@@ -1724,6 +1983,16 @@ export default function App() {
                     {practiceResult.passed ? 'Nice work!' : 'Not quite...'}
                   </p>
                   <p className="mt-1 text-4xl font-black text-slate-900">{(practiceResult.similarity * 100).toFixed(0)}%</p>
+                  {practiceResult.notes?.length ? (
+                    <ul className="mx-auto mt-3 max-w-xs space-y-1 text-left">
+                      {practiceResult.notes.map((note) => (
+                        <li key={note} className="flex items-start gap-1.5 text-xs text-slate-600">
+                          <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-400" />
+                          <span>{note}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                   <div className="mt-5 flex gap-3">
                     <button
                       onClick={() => setPracticeResult(null)}
@@ -2114,12 +2383,14 @@ export default function App() {
             : null;
           const passRate = attempts > 0 ? passes / attempts : null;
           return { word, attempts, passes, passRate, avgSim, score: avgSim ?? passRate ?? -1 };
-        }).sort((a, b) => a.score - b.score);
+        }).sort((a, b) => statsSortDir === 'weakest' ? a.score - b.score : b.score - a.score);
 
         const DAY_MS = 86_400_000;
-        const now = Date.now();
-        const dailyBuckets = Array.from({ length: 14 }, (_, i) => {
-          const start = now - (13 - i) * DAY_MS;
+        const midnightToday = new Date();
+        midnightToday.setHours(0, 0, 0, 0);
+        const todayStart = midnightToday.getTime();
+        const dailyBuckets = Array.from({ length: statsRangeDays }, (_, i) => {
+          const start = todayStart - (statsRangeDays - 1 - i) * DAY_MS;
           const end = start + DAY_MS;
           const dayEntries = setHistory.filter((h) => h.timestamp >= start && h.timestamp < end);
           const passes = dayEntries.filter((h) => h.status === 'correct').length;
@@ -2130,6 +2401,8 @@ export default function App() {
             rate: dayEntries.length > 0 ? passes / dayEntries.length : null,
           };
         });
+        const labelIndices = new Set([0, Math.floor((statsRangeDays - 1) / 2), statsRangeDays - 1]);
+        const rangeAttempts = dailyBuckets.reduce((sum, day) => sum + day.attempts, 0);
 
         return (
           <main className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
@@ -2179,72 +2452,136 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Last 14 days bar chart */}
+              {/* Activity chart */}
               <div className="mb-6">
-                <p className={`mb-3 text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Last 14 Days</p>
-                <div className="flex h-24 items-end gap-1">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className={`text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                    Activity
+                    <span className={`ml-2 text-xs font-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                      {rangeAttempts} check{rangeAttempts !== 1 ? 's' : ''} in the last {statsRangeDays} days
+                    </span>
+                  </p>
+                  <div className={`flex overflow-hidden rounded-lg border ${isDarkMode ? 'border-slate-600' : 'border-slate-300'}`}>
+                    {STATS_RANGE_OPTIONS.map((days) => (
+                      <button
+                        key={days}
+                        onClick={() => setStatsRangeDays(days)}
+                        className={`px-2.5 py-1 text-xs font-bold transition-colors ${
+                          statsRangeDays === days
+                            ? 'bg-indigo-600 text-white'
+                            : isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {days}d
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className={`flex h-24 items-end ${statsRangeDays > 30 ? 'gap-px' : 'gap-1'}`}>
                   {dailyBuckets.map((day, i) => (
-                    <div key={i} className="flex flex-1 flex-col items-center gap-0.5">
-                      <div className="relative flex w-full flex-1 items-end">
-                        <div
-                          className={`w-full rounded-sm ${day.rate === null ? (isDarkMode ? 'bg-slate-700' : 'bg-slate-200') : day.rate >= 0.65 ? 'bg-emerald-500' : 'bg-amber-400'}`}
-                          style={{ height: day.rate !== null ? `${Math.max(6, day.rate * 100)}%` : '6%' }}
-                          title={day.rate !== null ? `${day.label}: ${day.passes}/${day.attempts} (${(day.rate * 100).toFixed(0)}%)` : `${day.label}: no data`}
-                        />
+                    <div key={i} className="flex min-w-0 flex-1 flex-col items-center gap-0.5">
+                      <div
+                        className={`relative flex w-full flex-1 items-end overflow-hidden rounded-sm ${
+                          day.attempts > 0
+                            ? (isDarkMode ? 'bg-slate-700' : 'bg-slate-200')
+                            : (isDarkMode ? 'bg-slate-800' : 'bg-slate-100')
+                        }`}
+                        title={day.attempts > 0
+                          ? `${day.label}: ${day.passes}/${day.attempts} (${(day.rate * 100).toFixed(0)}%)`
+                          : `${day.label}: no practice`}
+                      >
+                        {day.attempts > 0 ? (
+                          <div
+                            className={`w-full rounded-sm ${proficiencyBarClass(day.rate)}`}
+                            style={{ height: `${Math.max(4, day.rate * 100)}%` }}
+                          />
+                        ) : null}
                       </div>
-                      {i === 0 || i === 6 || i === 13 ? (
-                        <span className={`text-[9px] font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{day.label}</span>
+                      {labelIndices.has(i) ? (
+                        <span className={`truncate text-[9px] font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{day.label}</span>
                       ) : <span className="h-3" />}
                     </div>
                   ))}
                 </div>
-                <div className={`mt-2 flex gap-4 text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                  <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-emerald-500" />≥65% pass</span>
-                  <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-amber-400" />&lt;65% pass</span>
-                  <span className="flex items-center gap-1"><span className={`inline-block h-2 w-2 rounded-sm ${isDarkMode ? 'bg-slate-700' : 'bg-slate-200'}`} />no data</span>
+                <div className={`mt-2 flex flex-wrap gap-4 text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                  <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-emerald-500" />strong day</span>
+                  <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-amber-400" />mixed day</span>
+                  <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-rose-500" />tough day</span>
+                  <span className="flex items-center gap-1"><span className={`inline-block h-2 w-2 rounded-sm ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100'}`} />no practice</span>
                 </div>
               </div>
 
-              {/* Card rankings */}
+              {/* Card proficiencies */}
               <div>
-                <p className={`mb-3 text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-                  Card Rankings
-                  <span className={`ml-2 text-xs font-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>weakest → strongest</span>
-                </p>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className={`text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Card Proficiencies</p>
+                    <p className={`mt-0.5 text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                      Sorted {statsSortDir === 'weakest' ? 'weakest to strongest' : 'strongest to weakest'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setStatsSortDir((prev) => prev === 'weakest' ? 'strongest' : 'weakest')}
+                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}
+                    title="Reverse sort order"
+                  >
+                    {statsSortDir === 'weakest'
+                      ? <ChevronUp className="h-3.5 w-3.5" />
+                      : <ChevronDown className="h-3.5 w-3.5" />}
+                    <span>{statsSortDir === 'weakest' ? 'Weakest first' : 'Strongest first'}</span>
+                  </button>
+                </div>
                 {statsWords.length === 0 ? (
                   <p className={`text-sm ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>No cards in this set.</p>
                 ) : (
-                  <div className={`overflow-hidden rounded-xl border ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className={isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}>
-                          <th className={`px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>#</th>
-                          <th className={`px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Card</th>
-                          <th className={`px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Checks</th>
-                          <th className={`px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Pass Rate</th>
-                          <th className={`px-3 py-2.5 text-right text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Avg Match</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {wordStats.map((ws, rank) => (
-                          <tr key={ws.word} className={`border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
-                            <td className={`px-3 py-2.5 text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{rank + 1}</td>
-                            <td className={`px-3 py-2.5 font-bold tracking-wide ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{ws.word}</td>
-                            <td className={`px-3 py-2.5 text-right ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{ws.attempts}</td>
-                            <td className="px-3 py-2.5 text-right">
-                              {ws.passRate !== null ? (
-                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${ws.passRate >= 0.65 ? 'bg-emerald-100 text-emerald-700' : ws.passRate >= 0.4 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
-                                  {(ws.passRate * 100).toFixed(0)}%
-                                </span>
-                              ) : <span className={`text-xs ${isDarkMode ? 'text-slate-600' : 'text-slate-300'}`}>—</span>}
-                            </td>
-                            <td className={`px-3 py-2.5 text-right text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  <div className="space-y-2">
+                    {wordStats.map((ws) => (
+                      <div
+                        key={ws.word}
+                        className={`rounded-xl border p-3.5 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}
+                      >
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className={`text-base font-black tracking-wide ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{ws.word}</span>
+                          <span className={`flex-shrink-0 text-xs font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                            {ws.attempts === 0 ? 'Not practiced yet' : `${ws.attempts} check${ws.attempts !== 1 ? 's' : ''}`}
+                          </span>
+                        </div>
+
+                        <div className="mt-2.5">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className={`text-xs font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Pass rate</span>
+                            <span className={`text-sm font-black ${ws.passRate !== null ? proficiencyTextClass(ws.passRate) : isDarkMode ? 'text-slate-600' : 'text-slate-300'}`}>
+                              {ws.passRate !== null ? `${(ws.passRate * 100).toFixed(0)}%` : '—'}
+                            </span>
+                          </div>
+                          <div className={`mt-1 h-2.5 w-full overflow-hidden rounded-full ${isDarkMode ? 'bg-slate-700' : 'bg-slate-200'}`}>
+                            {ws.passRate !== null ? (
+                              <div
+                                className={`h-full rounded-full transition-all duration-300 ${proficiencyBarClass(ws.passRate)}`}
+                                style={{ width: `${Math.max(2, ws.passRate * 100)}%` }}
+                              />
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="mt-2.5">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className={`text-xs font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Average match score</span>
+                            <span className={`text-sm font-black ${ws.avgSim !== null ? proficiencyTextClass(ws.avgSim) : isDarkMode ? 'text-slate-600' : 'text-slate-300'}`}>
                               {ws.avgSim !== null ? `${(ws.avgSim * 100).toFixed(0)}%` : '—'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                            </span>
+                          </div>
+                          <div className={`mt-1 h-2.5 w-full overflow-hidden rounded-full ${isDarkMode ? 'bg-slate-700' : 'bg-slate-200'}`}>
+                            {ws.avgSim !== null ? (
+                              <div
+                                className={`h-full rounded-full transition-all duration-300 ${proficiencyBarClass(ws.avgSim)}`}
+                                style={{ width: `${Math.max(2, ws.avgSim * 100)}%` }}
+                              />
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -2543,14 +2880,14 @@ export default function App() {
                           <>
                             <button
                               onClick={() => handleEditSet(set)}
-                              className={`rounded-md border p-1 opacity-0 transition-opacity group-hover:opacity-100 ${isDarkMode ? 'border-indigo-500 text-indigo-300 hover:bg-indigo-900/30' : 'border-indigo-300 text-indigo-700 hover:bg-indigo-50'}`}
+                              className={`rounded-md border p-1 ${isDarkMode ? 'border-indigo-500 text-indigo-300 hover:bg-indigo-900/30' : 'border-indigo-300 text-indigo-700 hover:bg-indigo-50'}`}
                               title="Edit set"
                             >
                               <Pencil className="h-5 w-5" strokeWidth={2.5} />
                             </button>
                             <button
                               onClick={() => setSetDeleteCandidate(set)}
-                              className={`rounded-md border p-1 opacity-0 transition-opacity group-hover:opacity-100 ${isDarkMode ? 'border-rose-500 text-rose-300 hover:bg-rose-900/30' : 'border-rose-300 text-rose-700 hover:bg-rose-50'}`}
+                              className={`rounded-md border p-1 ${isDarkMode ? 'border-rose-500 text-rose-300 hover:bg-rose-900/30' : 'border-rose-300 text-rose-700 hover:bg-rose-50'}`}
                               title="Delete set"
                             >
                               <Trash2 className="h-5 w-5" strokeWidth={2.5} />
@@ -2607,7 +2944,7 @@ export default function App() {
 
                 <button
                   onClick={() => {
-                    setShowTutorial(true);
+                    startTutorial();
                     setIsSidebarOpen(false);
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}

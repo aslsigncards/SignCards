@@ -53,7 +53,7 @@ function baselinePath(uid, refKey, slot) {
 
 // ── Upload ────────────────────────────────────────────────────────────────────
 
-export async function uploadBaseline(uid, refKey, frames, frames2, timestamp) {
+export async function uploadBaseline(uid, refKey, frames, frames2, timestamp, motion, motion2) {
   if (!firestore || !storage) return;
   const uploads = [];
   if (frames) uploads.push(uploadString(ref(storage, baselinePath(uid, refKey, 'h1')), framesToBase64(frames)));
@@ -64,6 +64,9 @@ export async function uploadBaseline(uid, refKey, frames, frames2, timestamp) {
     refKey,
     hasH1: !!frames,
     hasH2: !!frames2,
+    // Wrist trajectories are small enough to live in the doc itself.
+    ...(motion ? { motion: motion.map((s) => ({ x: s.x, y: s.y, z: s.z, s: s.s })) } : {}),
+    ...(motion2 ? { motion2: motion2.map((s) => ({ x: s.x, y: s.y, z: s.z, s: s.s })) } : {}),
     updatedAt: timestamp ?? Date.now(),
   });
 }
@@ -134,6 +137,8 @@ export async function downloadAndMerge(uid, db, setKeyFilter = null) {
           timestamp: meta.updatedAt,
           frames: frames ?? null,
           ...(frames2 ? { frames2 } : {}),
+          ...(Array.isArray(meta.motion) ? { motion: meta.motion } : {}),
+          ...(Array.isArray(meta.motion2) ? { motion2: meta.motion2 } : {}),
         });
       }
     }));
@@ -178,7 +183,7 @@ export async function uploadAllLocalData(uid, db) {
 
   for (let i = 0; i < refs.length; i += 3) {
     await Promise.all(refs.slice(i, i + 3).map((r) =>
-      uploadBaseline(uid, r.word, r.frames, r.frames2, r.timestamp)
+      uploadBaseline(uid, r.word, r.frames, r.frames2, r.timestamp, r.motion, r.motion2)
     ));
   }
 
