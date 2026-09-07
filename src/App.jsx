@@ -63,6 +63,7 @@ import {
 } from './lib/handAnalysis';
 import { sanitizeImport, isPlainRecord, MAX_IMPORT_BYTES } from './lib/backup';
 import { proficiencyBarClass, proficiencyTextClass, selectNextRandomIndex } from './lib/stats';
+import Modal from './components/Modal';
 
 const FACE_DETECT_INTERVAL = 5; // run face detection every Nth frame
 
@@ -223,6 +224,16 @@ export default function App() {
   const baselineCount = wordsWithBaseline.length;
   const allBaselinesReady = missingBaselineCount === 0;
   const enabledMatchCount = MATCH_FEATURE_LIST.filter((f) => matchFeatures[f.key] !== false).length;
+
+  const liveStatus = practiceResult
+    ? `${practiceResult.passed ? 'Pass' : 'Not quite'}. Score ${(practiceResult.similarity * 100).toFixed(0)} percent.${practiceResult.notes?.length ? ` ${practiceResult.notes.join(' ')}` : ''}`
+    : isActiveRecording
+      ? 'Recording now. Perform your sign.'
+      : isBuffering
+        ? `Get ready. Recording starts in ${bufferSecondsLeft.toFixed(0)} seconds.`
+        : cameraLost
+          ? 'Camera disconnected.'
+          : '';
 
   activeReferenceRef.current = activeReference || null;
   currentWordRef.current = currentWord || '';
@@ -1421,23 +1432,28 @@ export default function App() {
 
   return (
     <div className={`${isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} min-h-screen font-sans antialiased`}>
+      <a href="#main-content" className="sr-only skip-link">Skip to main content</a>
+      <p aria-live="assertive" aria-atomic="true" className="sr-only">{liveStatus}</p>
       <header className={`sticky top-0 z-50 border-b ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`}>
         <div className="w-full flex h-16 items-center justify-between px-6">
-          <div
+          <button
+            type="button"
             data-tour="menu"
             className="flex cursor-pointer items-center gap-2"
             onClick={() => setIsSidebarOpen(true)}
+            aria-expanded={isSidebarOpen}
+            aria-label="Open navigation menu"
           >
-            <div className="rounded-lg bg-indigo-600 px-2 py-1.5 text-sm font-bold tracking-tight text-white">ASL</div>
+            <span className="rounded-lg bg-indigo-600 px-2 py-1.5 text-sm font-bold tracking-tight text-white">ASL</span>
             <span className="text-lg font-bold tracking-tight">SignCards</span>
-          </div>
+          </button>
           {!authLoading && (
             user ? (
               <button
                 onClick={() => { setAppPage('profile'); setView('app'); }}
                 className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
               >
-                <User className="h-4 w-4 flex-shrink-0" />
+                <User className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
                 <span className="hidden sm:inline max-w-[120px] truncate">{user.displayName || user.email?.split('@')[0] || 'Account'}</span>
               </button>
             ) : (
@@ -1445,7 +1461,7 @@ export default function App() {
                 onClick={() => setShowAuthModal(true)}
                 className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700"
               >
-                <LogIn className="h-4 w-4" />
+                <LogIn className="h-4 w-4" aria-hidden="true" />
                 <span>Sign In</span>
               </button>
             )
@@ -1454,7 +1470,7 @@ export default function App() {
       </header>
 
       {view === 'landing' ? (
-        <main>
+        <main id="main-content" tabIndex={-1}>
           <section className="w-full px-6 pb-16 pt-20 text-center">
             <h1 className={`mx-auto max-w-3xl text-5xl font-black leading-tight tracking-tight md:text-6xl ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
               Master American Sign Language with{' '}
@@ -1470,7 +1486,7 @@ export default function App() {
                 className={`group flex items-center space-x-2 rounded-xl bg-indigo-600 px-8 py-4 text-lg font-semibold text-white shadow-lg transition-all hover:bg-indigo-700 hover:shadow-xl ${isDarkMode ? 'shadow-indigo-900/60' : 'shadow-indigo-200'}`}
               >
                 <span>Launch Flashcards</span>
-                <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
+                <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" aria-hidden="true" />
               </button>
             </div>
             {!user && !authLoading ? (
@@ -1490,20 +1506,21 @@ export default function App() {
             ) : null}
           </section>
 
-          <section className={`border-y py-16 ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`}>
+          <section className={`border-y py-16 ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`} aria-labelledby="features-heading">
+            <h2 id="features-heading" className="sr-only">Features</h2>
             <div className="mx-auto grid max-w-5xl gap-8 px-4 md:grid-cols-3">
               <div className={`rounded-xl border p-6 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-                <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-lg ${isDarkMode ? 'bg-indigo-900 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}><Camera /></div>
+                <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-lg ${isDarkMode ? 'bg-indigo-900 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}><Camera aria-hidden="true" /></div>
                 <h3 className="mb-2 text-xl font-bold">Personal Baseline Matching</h3>
                 <p className={isDarkMode ? 'text-slate-400' : 'text-slate-600'}>Compares your live hand spatial angles against your own recorded baselines rather than generic datasets.</p>
               </div>
               <div className={`rounded-xl border p-6 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-                <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-lg ${isDarkMode ? 'bg-indigo-900 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}><Layers /></div>
+                <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-lg ${isDarkMode ? 'bg-indigo-900 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}><Layers aria-hidden="true" /></div>
                 <h3 className="mb-2 text-xl font-bold">Custom Vocab Bundles</h3>
                 <p className={isDarkMode ? 'text-slate-400' : 'text-slate-600'}>Create target list decks effortlessly or import preset sequences mapped out directly by campus clubs.</p>
               </div>
               <div className={`rounded-xl border p-6 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-                <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-lg ${isDarkMode ? 'bg-indigo-900 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}><Zap /></div>
+                <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-lg ${isDarkMode ? 'bg-indigo-900 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}><Zap aria-hidden="true" /></div>
                 <h3 className="mb-2 text-xl font-bold">Optional Cloud Sync</h3>
                 <p className={isDarkMode ? 'text-slate-400' : 'text-slate-600'}>No login required. Data lives locally by default. Sign in to back up and sync your baselines across devices with encrypted cloud storage.</p>
               </div>
@@ -1511,9 +1528,9 @@ export default function App() {
           </section>
         </main>
       ) : appPage === 'learn' ? (
-        <main className="w-full h-[calc(100vh-4rem)] flex flex-col">
+        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] flex flex-col">
           {/* Phase header */}
-          <div data-tour="phase" className={`relative flex flex-shrink-0 items-center justify-between px-4 py-3 ${workflowPhase === 'baseline' ? 'bg-orange-500' : 'bg-emerald-600'}`}>
+          <div data-tour="phase" className={`relative flex flex-shrink-0 items-center justify-between px-4 py-3 ${workflowPhase === 'baseline' ? 'bg-orange-700' : 'bg-emerald-700'}`}>
             <div className="flex items-center gap-2 text-white">
               <div className="h-2 w-2 rounded-full bg-white/80" />
               <span className="text-sm font-bold tracking-wide uppercase">
@@ -1528,17 +1545,17 @@ export default function App() {
                     style={{ width: `${(baselineCount / activeWords.length) * 100}%` }}
                   />
                 </div>
-                <span className="text-xs font-semibold opacity-80">{baselineCount}/{activeWords.length}</span>
+                <span className="text-xs font-semibold text-white">{baselineCount}/{activeWords.length}</span>
               </div>
-              <span className="text-sm font-semibold text-white opacity-90">Card {currentIndex + 1} / {modeWords.length}</span>
+              <span className="text-sm font-semibold text-white">Card {currentIndex + 1} / {modeWords.length}</span>
             </div>
             {workflowPhase === 'practice' ? (
               <button
                 onClick={() => setPracticeOrder((prev) => prev === 'ordered' ? 'random' : 'ordered')}
-                className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-white/80 transition-colors hover:bg-white/20"
-                title={practiceOrder === 'ordered' ? 'Switch to randomized' : 'Switch to in-order'}
+                className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-white transition-colors hover:bg-white/20"
+                aria-label={practiceOrder === 'ordered' ? 'Card order: in order. Switch to randomized' : 'Card order: randomized. Switch to in order'}
               >
-                <Shuffle className="h-3.5 w-3.5" />
+                <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
                 <span className="hidden sm:inline">{practiceOrder === 'ordered' ? 'In Order' : 'Random'}</span>
               </button>
             ) : null}
@@ -1546,22 +1563,33 @@ export default function App() {
               data-tour="more"
               onClick={() => setIsOverflowMenuOpen((prev) => !prev)}
               className="rounded-lg p-2 text-white transition-colors hover:bg-white/20"
-              title="More options"
+              aria-label="More options"
+              aria-expanded={isOverflowMenuOpen}
+              aria-haspopup="true"
             >
-              <MoreHorizontal className="h-5 w-5" />
+              <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
             </button>
 
             {isOverflowMenuOpen ? (
               <>
-                <div className="fixed inset-0 z-[60]" onClick={() => setIsOverflowMenuOpen(false)} />
-                <div className={`absolute right-2 top-full z-[65] mt-1 w-56 overflow-hidden rounded-xl border shadow-xl ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-white'}`}>
+                <button
+                  type="button"
+                  className="fixed inset-0 z-[60] cursor-default"
+                  onClick={() => setIsOverflowMenuOpen(false)}
+                  aria-label="Close options menu"
+                />
+                <div
+                  role="menu"
+                  onKeyDown={(e) => { if (e.key === 'Escape') setIsOverflowMenuOpen(false); }}
+                  className={`absolute right-2 top-full z-[65] mt-1 w-56 overflow-hidden rounded-xl border shadow-xl ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-white'}`}
+                >
                   {workflowPhase === 'baseline' ? (
                     <button
                       onClick={() => { switchToPracticeIfReady(); setIsOverflowMenuOpen(false); }}
                       disabled={wordsWithBaseline.length === 0}
                       className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold disabled:opacity-40 ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50'}`}
                     >
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden="true" />
                       Go to Practice
                     </button>
                   ) : (
@@ -1570,14 +1598,14 @@ export default function App() {
                         onClick={() => { switchToBaseline(); setIsOverflowMenuOpen(false); }}
                         className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50'}`}
                       >
-                        <RotateCcw className="h-4 w-4 text-orange-500" />
+                        <RotateCcw className="h-4 w-4 text-orange-500" aria-hidden="true" />
                         Re-record Baselines
                       </button>
                       <button
                         onClick={() => { handleValidation(false); setIsOverflowMenuOpen(false); }}
                         className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50'}`}
                       >
-                        <XCircle className="h-4 w-4 text-rose-500" />
+                        <XCircle className="h-4 w-4 text-rose-500" aria-hidden="true" />
                         Mark Fail
                       </button>
                     </>
@@ -1588,7 +1616,7 @@ export default function App() {
                       onClick={() => { handleEditSet(activeSetOption); setIsOverflowMenuOpen(false); }}
                       className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50'}`}
                     >
-                      <Pencil className="h-4 w-4 text-indigo-500" />
+                      <Pencil className="h-4 w-4 text-indigo-500" aria-hidden="true" />
                       Edit Set
                     </button>
                   ) : null}
@@ -1596,14 +1624,14 @@ export default function App() {
                     onClick={() => { setIsMirrored((prev) => !prev); setIsOverflowMenuOpen(false); }}
                     className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50'}`}
                   >
-                    <Camera className="h-4 w-4" />
+                    <Camera className="h-4 w-4" aria-hidden="true" />
                     {isMirrored ? 'Disable Mirroring' : 'Enable Mirroring'}
                   </button>
                   <button
                     onClick={() => { setCurrentIndex(0); setIsOverflowMenuOpen(false); }}
                     className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50'}`}
                   >
-                    <RotateCcw className="h-4 w-4" />
+                    <RotateCcw className="h-4 w-4" aria-hidden="true" />
                     Reset to Card 1
                   </button>
                 </div>
@@ -1616,7 +1644,7 @@ export default function App() {
               <p><strong>Only cards with recorded baselines appear in practice.</strong> {missingBaselineCount} card{missingBaselineCount !== 1 ? 's are' : ' is'} missing.</p>
               <button
                 onClick={switchToBaseline}
-                className={`flex-shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold ${isDarkMode ? 'bg-amber-300 text-amber-950 hover:bg-amber-200' : 'bg-amber-500 text-white hover:bg-amber-600'}`}
+                className={`flex-shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold ${isDarkMode ? 'bg-amber-300 text-amber-950 hover:bg-amber-200' : 'bg-amber-700 text-white hover:bg-amber-800'}`}
               >
                 Record Missing
               </button>
@@ -1671,8 +1699,8 @@ export default function App() {
                 <div className="rounded-2xl bg-white px-8 py-6 text-center shadow-2xl">
                   <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full ${practiceResult.passed ? 'bg-emerald-100' : 'bg-amber-100'}`}>
                     {practiceResult.passed
-                      ? <CheckCircle2 className="h-8 w-8 text-emerald-600" />
-                      : <XCircle className="h-8 w-8 text-amber-500" />}
+                      ? <CheckCircle2 className="h-8 w-8 text-emerald-600" aria-hidden="true" />
+                      : <XCircle className="h-8 w-8 text-amber-500" aria-hidden="true" />}
                   </div>
                   <p className={`mt-3 text-xl font-black ${practiceResult.passed ? 'text-emerald-700' : 'text-slate-800'}`}>
                     {practiceResult.passed ? 'Nice work!' : 'Not quite...'}
@@ -1776,14 +1804,14 @@ export default function App() {
             {/* Camera initializing overlay */}
             {engineLoading ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/80">
-                <LoaderCircle className="h-8 w-8 animate-spin text-white/70" />
+                <LoaderCircle className="h-8 w-8 animate-spin text-white/70" aria-hidden="true" />
                 <p className="mt-3 text-sm font-semibold text-white/70">Initializing camera…</p>
               </div>
             ) : null}
 
             {cameraLost ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/85 p-4 text-center">
-                <CameraOff className="h-8 w-8 text-white/70" />
+                <CameraOff className="h-8 w-8 text-white/70" aria-hidden="true" />
                 <p className="mt-3 text-sm font-semibold text-white">Camera disconnected</p>
                 <p className="mt-1 max-w-xs text-xs text-white/60">
                   Reconnect your camera. If it is already plugged back in, tap below to reconnect.
@@ -1823,8 +1851,8 @@ export default function App() {
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-orange-500 py-3 text-sm font-bold text-white transition-colors hover:bg-orange-600 disabled:cursor-not-allowed"
               >
                 {engineLoading
-                  ? <><LoaderCircle className="h-5 w-5 animate-spin" /><span>Initializing…</span></>
-                  : <><Radio className={`h-5 w-5 ${isRecordingReference ? 'animate-ping' : ''}`} /><span>{hasRecordedBaseline(activeReference) ? 'Re-record Baseline' : 'Record Baseline'}</span></>
+                  ? <><LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" /><span>Initializing…</span></>
+                  : <><Radio className={`h-5 w-5 ${isRecordingReference ? 'animate-ping' : ''}`} aria-hidden="true" /><span>{hasRecordedBaseline(activeReference) ? 'Re-record Baseline' : 'Record Baseline'}</span></>
                 }
               </button>
             ) : (
@@ -1834,8 +1862,8 @@ export default function App() {
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {engineLoading
-                  ? <><LoaderCircle className="h-5 w-5 animate-spin" /><span>Initializing…</span></>
-                  : <><CheckCircle2 className="h-5 w-5" /><span>Check My Sign</span></>
+                  ? <><LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" /><span>Initializing…</span></>
+                  : <><CheckCircle2 className="h-5 w-5" aria-hidden="true" /><span>Check My Sign</span></>
                 }
               </button>
             )}
@@ -1857,7 +1885,7 @@ export default function App() {
           </div>
         </main>
       ) : appPage === 'create' ? (
-        <main className="w-full h-[calc(100vh-4rem)] overflow-y-auto p-3 lg:p-4">
+        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] overflow-y-auto p-3 lg:p-4">
           <section className={`relative mx-auto max-w-4xl rounded-2xl border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-6 flex items-center gap-3">
               <button
@@ -1931,9 +1959,11 @@ export default function App() {
                               setTooltipOpenId(card.id);
                             }
                           }}
-                          className={`shrink-0 rounded-full p-0.5 transition-colors ${isDarkMode ? 'text-slate-500 hover:text-slate-200' : 'text-slate-400 hover:text-slate-700'} ${tooltipOpenId === card.id ? (isDarkMode ? 'text-slate-200' : 'text-slate-700') : ''}`}
+                          className={`shrink-0 rounded-full p-0.5 transition-colors ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'} ${tooltipOpenId === card.id ? (isDarkMode ? 'text-slate-200' : 'text-slate-700') : ''}`}
+                          aria-label="What is a multi-sign card?"
+                          aria-expanded={tooltipOpenId === card.id}
                         >
-                          <CircleHelp className="h-4 w-4" />
+                          <CircleHelp className="h-4 w-4" aria-hidden="true" />
                         </button>
 
                         <button
@@ -1943,9 +1973,9 @@ export default function App() {
                             return filtered.length ? filtered : [{ id: `${Date.now()}`, word: '', isMultiSign: false, components: '' }];
                           })}
                           className={`shrink-0 rounded-md p-1 text-rose-500 hover:bg-rose-100 ${isDarkMode ? 'hover:bg-rose-900/30' : 'hover:bg-rose-100'}`}
-                          title="Remove card"
+                          aria-label={`Remove card ${idx + 1}`}
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
                         </button>
                       </div>
 
@@ -1979,10 +2009,10 @@ export default function App() {
                   }}
                   className={`flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
                 >
-                  <Plus className="h-4 w-4" />
+                  <Plus className="h-4 w-4" aria-hidden="true" />
                   Add Card
                 </button>
-                <span className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                   or press Enter in any card field
                 </span>
               </div>
@@ -2005,7 +2035,7 @@ export default function App() {
           </section>
         </main>
       ) : appPage === 'settings' ? (
-        <main className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
+        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
           <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-2xl border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-4 flex items-center gap-3">
               <button
@@ -2024,7 +2054,7 @@ export default function App() {
                 className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold">
-                  <Moon className="h-4 w-4" />
+                  <Moon className="h-4 w-4" aria-hidden="true" />
                   <span>Dark Mode</span>
                 </span>
                 <span className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${isDarkMode ? 'bg-indigo-600' : 'bg-slate-300'}`}>
@@ -2039,7 +2069,7 @@ export default function App() {
                 className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold">
-                  <Camera className="h-4 w-4" />
+                  <Camera className="h-4 w-4" aria-hidden="true" />
                   <span>Camera Mirroring</span>
                 </span>
                 <span className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${isMirrored ? 'bg-indigo-600' : 'bg-slate-300'}`}>
@@ -2054,7 +2084,7 @@ export default function App() {
                 className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold">
-                  <Users className="h-4 w-4" />
+                  <Users className="h-4 w-4" aria-hidden="true" />
                   <span>Show Hand Joints</span>
                 </span>
                 <span className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${showHandNodes ? 'bg-indigo-600' : 'bg-slate-300'}`}>
@@ -2069,7 +2099,7 @@ export default function App() {
                 className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold">
-                  <User className="h-4 w-4" />
+                  <User className="h-4 w-4" aria-hidden="true" />
                   <span>Show Body Zone Guide</span>
                 </span>
                 <span className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${showFaceGuide ? 'bg-indigo-600' : 'bg-slate-300'}`}>
@@ -2084,7 +2114,7 @@ export default function App() {
                 className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold">
-                  <CircleHelp className="h-4 w-4" />
+                  <CircleHelp className="h-4 w-4" aria-hidden="true" />
                   <span>Show Debug Log</span>
                 </span>
                 <span className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${showDebugLog ? 'bg-indigo-600' : 'bg-slate-300'}`}>
@@ -2099,13 +2129,13 @@ export default function App() {
                   className={`flex w-full items-center justify-between px-4 py-3 text-left ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}
                 >
                   <span className="flex items-center gap-2 text-sm font-semibold">
-                    <Zap className="h-4 w-4" />
+                    <Zap className="h-4 w-4" aria-hidden="true" />
                     <span>Sign Matching Features</span>
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${enabledMatchCount === MATCH_FEATURE_LIST.length ? (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-600') : 'bg-amber-500 text-white'}`}>
                       {enabledMatchCount}/{MATCH_FEATURE_LIST.length}
                     </span>
                   </span>
-                  {showMatchFeatures ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  {showMatchFeatures ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
                 </button>
 
                 {showMatchFeatures ? (
@@ -2149,7 +2179,7 @@ export default function App() {
 
             <div className={`mt-8 border-t pt-6 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
               <p className={`mb-1 text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Data Backup</p>
-              <p className={`mb-3 text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+              <p className={`mb-3 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                 {lastBackupAt
                   ? `Last exported: ${new Date(lastBackupAt).toLocaleString()}`
                   : 'No backup yet. Export to protect your sets and baselines from accidental browser storage clearing.'}
@@ -2159,14 +2189,14 @@ export default function App() {
                   onClick={handleExportData}
                   className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
                 >
-                  <Download className="h-4 w-4" />
+                  <Download className="h-4 w-4" aria-hidden="true" />
                   Export My Data
                 </button>
                 <button
                   onClick={() => importFileInputRef.current?.click()}
                   className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}
                 >
-                  <Upload className="h-4 w-4" />
+                  <Upload className="h-4 w-4" aria-hidden="true" />
                   Import Data
                 </button>
               </div>
@@ -2215,7 +2245,7 @@ export default function App() {
         const rangeAttempts = dailyBuckets.reduce((sum, day) => sum + day.attempts, 0);
 
         return (
-          <main className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
+          <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
             <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-2xl border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
               <div className="mb-5 flex items-center gap-3">
                 <button
@@ -2229,8 +2259,9 @@ export default function App() {
 
               {/* Set selector */}
               <div className="mb-6">
-                <label className={`mb-1.5 block text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Set</label>
+                <label htmlFor="stats-set-select" className={`mb-1.5 block text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Set</label>
                 <select
+                  id="stats-set-select"
                   value={statsKey}
                   onChange={(e) => setStatsSetKey(e.target.value)}
                   className={`rounded-lg border px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-400 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-300 bg-white text-slate-900'}`}
@@ -2249,7 +2280,7 @@ export default function App() {
                 </div>
                 <div className={`rounded-xl border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
                   <p className={`text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Pass Rate</p>
-                  <p className={`mt-1 text-3xl font-black ${overallRate !== null ? (overallRate >= 0.65 ? 'text-emerald-500' : 'text-amber-500') : isDarkMode ? 'text-slate-600' : 'text-slate-300'}`}>
+                  <p className={`mt-1 text-3xl font-black ${overallRate !== null ? (overallRate >= 0.65 ? 'text-emerald-500' : 'text-amber-500') : isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                     {overallRate !== null ? `${(overallRate * 100).toFixed(0)}%` : '—'}
                   </p>
                 </div>
@@ -2257,7 +2288,7 @@ export default function App() {
                   <p className={`text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Active Cards</p>
                   <p className={`mt-1 text-3xl font-black ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
                     {wordStats.filter((w) => w.attempts > 0).length}
-                    <span className={`text-base font-semibold ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>/{statsWords.length}</span>
+                    <span className={`text-base font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>/{statsWords.length}</span>
                   </p>
                 </div>
               </div>
@@ -2267,7 +2298,7 @@ export default function App() {
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <p className={`text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
                     Activity
-                    <span className={`ml-2 text-xs font-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                    <span className={`ml-2 text-xs font-normal ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                       {rangeAttempts} check{rangeAttempts !== 1 ? 's' : ''} in the last {statsRangeDays} days
                     </span>
                   </p>
@@ -2308,12 +2339,12 @@ export default function App() {
                         ) : null}
                       </div>
                       {labelIndices.has(i) ? (
-                        <span className={`truncate text-[9px] font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{day.label}</span>
+                        <span className={`truncate text-[9px] font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{day.label}</span>
                       ) : <span className="h-3" />}
                     </div>
                   ))}
                 </div>
-                <div className={`mt-2 flex flex-wrap gap-4 text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                <div className={`mt-2 flex flex-wrap gap-4 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                   <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-emerald-500" />strong day</span>
                   <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-amber-400" />mixed day</span>
                   <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm bg-rose-500" />tough day</span>
@@ -2326,7 +2357,7 @@ export default function App() {
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <p className={`text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Card Proficiencies</p>
-                    <p className={`mt-0.5 text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                    <p className={`mt-0.5 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                       Sorted {statsSortDir === 'weakest' ? 'weakest to strongest' : 'strongest to weakest'}
                     </p>
                   </div>
@@ -2336,13 +2367,13 @@ export default function App() {
                     title="Reverse sort order"
                   >
                     {statsSortDir === 'weakest'
-                      ? <ChevronUp className="h-3.5 w-3.5" />
-                      : <ChevronDown className="h-3.5 w-3.5" />}
+                      ? <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+                      : <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />}
                     <span>{statsSortDir === 'weakest' ? 'Weakest first' : 'Strongest first'}</span>
                   </button>
                 </div>
                 {statsWords.length === 0 ? (
-                  <p className={`text-sm ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>No cards in this set.</p>
+                  <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>No cards in this set.</p>
                 ) : (
                   <div className="space-y-2">
                     {wordStats.map((ws) => (
@@ -2352,7 +2383,7 @@ export default function App() {
                       >
                         <div className="flex items-baseline justify-between gap-3">
                           <span className={`text-base font-black tracking-wide ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{ws.word}</span>
-                          <span className={`flex-shrink-0 text-xs font-medium ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                          <span className={`flex-shrink-0 text-xs font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                             {ws.attempts === 0 ? 'Not practiced yet' : `${ws.attempts} check${ws.attempts !== 1 ? 's' : ''}`}
                           </span>
                         </div>
@@ -2360,7 +2391,7 @@ export default function App() {
                         <div className="mt-2.5">
                           <div className="flex items-baseline justify-between gap-2">
                             <span className={`text-xs font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Pass rate</span>
-                            <span className={`text-sm font-black ${ws.passRate !== null ? proficiencyTextClass(ws.passRate) : isDarkMode ? 'text-slate-600' : 'text-slate-300'}`}>
+                            <span className={`text-sm font-black ${ws.passRate !== null ? proficiencyTextClass(ws.passRate) : isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                               {ws.passRate !== null ? `${(ws.passRate * 100).toFixed(0)}%` : '—'}
                             </span>
                           </div>
@@ -2377,7 +2408,7 @@ export default function App() {
                         <div className="mt-2.5">
                           <div className="flex items-baseline justify-between gap-2">
                             <span className={`text-xs font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Average match score</span>
-                            <span className={`text-sm font-black ${ws.avgSim !== null ? proficiencyTextClass(ws.avgSim) : isDarkMode ? 'text-slate-600' : 'text-slate-300'}`}>
+                            <span className={`text-sm font-black ${ws.avgSim !== null ? proficiencyTextClass(ws.avgSim) : isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                               {ws.avgSim !== null ? `${(ws.avgSim * 100).toFixed(0)}%` : '—'}
                             </span>
                           </div>
@@ -2399,7 +2430,7 @@ export default function App() {
           </main>
         );
       })() : appPage === 'profile' ? (
-        <main className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
+        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
           <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-2xl border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-5 flex items-center gap-3">
               <button
@@ -2415,7 +2446,7 @@ export default function App() {
               <div className="flex flex-col items-center gap-4 py-12">
                 <p className={`text-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Sign in to access cloud sync and account management.</p>
                 <button onClick={() => setShowAuthModal(true)} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700">
-                  <LogIn className="h-4 w-4" />
+                  <LogIn className="h-4 w-4" aria-hidden="true" />
                   Sign In / Create Account
                 </button>
               </div>
@@ -2426,7 +2457,7 @@ export default function App() {
                   <p className={`mb-3 text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Account</p>
                   <div className="flex items-center gap-3">
                     <div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full ${isDarkMode ? 'bg-slate-700' : 'bg-slate-200'}`}>
-                      <User className="h-5 w-5" />
+                      <User className="h-5 w-5" aria-hidden="true" />
                     </div>
                     <div className="min-w-0">
                       {user.displayName ? <p className="truncate font-semibold">{user.displayName}</p> : null}
@@ -2444,11 +2475,11 @@ export default function App() {
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       {syncStatus === 'syncing' ? (
-                        <><LoaderCircle className="h-4 w-4 animate-spin text-indigo-500" /><span className="text-sm text-indigo-500">Syncing…</span></>
+                        <><LoaderCircle className="h-4 w-4 animate-spin text-indigo-500" aria-hidden="true" /><span className="text-sm text-indigo-500">Syncing…</span></>
                       ) : syncStatus === 'done' ? (
-                        <><Cloud className="h-4 w-4 text-emerald-500" /><span className="text-sm text-emerald-500">Synced{lastSyncedAt ? ` · ${new Date(lastSyncedAt).toLocaleTimeString()}` : ''}</span></>
+                        <><Cloud className="h-4 w-4 text-emerald-500" aria-hidden="true" /><span className="text-sm text-emerald-500">Synced{lastSyncedAt ? ` · ${new Date(lastSyncedAt).toLocaleTimeString()}` : ''}</span></>
                       ) : syncStatus === 'error' ? (
-                        <><CloudOff className="h-4 w-4 text-rose-500" /><span className="text-sm text-rose-500">Sync error — try again</span></>
+                        <><CloudOff className="h-4 w-4 text-rose-500" aria-hidden="true" /><span className="text-sm text-rose-500">Sync error — try again</span></>
                       ) : (
                         <span className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Not yet synced this session</span>
                       )}
@@ -2458,7 +2489,7 @@ export default function App() {
                       disabled={syncStatus === 'syncing'}
                       className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
                     >
-                      {syncStatus === 'syncing' ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+                      {syncStatus === 'syncing' ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Cloud className="h-3.5 w-3.5" aria-hidden="true" />}
                       Sync Now
                     </button>
                   </div>
@@ -2472,6 +2503,8 @@ export default function App() {
                       <input
                         type="password"
                         placeholder="New password (min 8 chars)"
+                        aria-label="New password, minimum 8 characters"
+                        autoComplete="new-password"
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') handleChangePassword(); }}
@@ -2536,7 +2569,7 @@ export default function App() {
           </section>
         </main>
       ) : (
-        <main className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
+        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
           <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-2xl border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-4 flex items-center gap-3">
               <button
@@ -2559,7 +2592,7 @@ export default function App() {
             </div>
             <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
               <div className="flex items-center gap-2">
-                <Users className="h-4 w-4" />
+                <Users className="h-4 w-4" aria-hidden="true" />
                 <p className="font-semibold">Build on it</p>
               </div>
               <p className="mt-1 text-sm">
@@ -2576,7 +2609,7 @@ export default function App() {
                 rel="noopener noreferrer"
                 className="mt-1 inline-flex items-center gap-2 text-indigo-400 underline"
               >
-                <GitBranch className="h-4 w-4" />
+                <GitBranch className="h-4 w-4" aria-hidden="true" />
                 <span>aslsigncards/SignCards</span>
               </a>
             </div>
@@ -2586,7 +2619,7 @@ export default function App() {
                 href="mailto:aslsigncards@gmail.com"
                 className="mt-1 inline-flex items-center gap-2 text-indigo-400 underline"
               >
-                <Mail className="h-4 w-4" />
+                <Mail className="h-4 w-4" aria-hidden="true" />
                 <span>aslsigncards@gmail.com</span>
               </a>
             </div>
@@ -2603,18 +2636,22 @@ export default function App() {
           ) : null}
 
           <aside
+            role="dialog"
+            aria-modal={isSidebarOpen ? 'true' : undefined}
+            aria-label="Main navigation"
+            onKeyDown={(e) => { if (e.key === 'Escape') setIsSidebarOpen(false); }}
             className={`fixed inset-y-0 left-0 z-[75] h-screen w-[360px] max-w-[92vw] border-r shadow-2xl transition-transform duration-300 ${
               isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'
-            } ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
+            } ${isSidebarOpen ? 'translate-x-0 visible' : '-translate-x-full invisible'}`}
           >
             <div className="flex h-full flex-col">
               <div className={`flex items-center justify-between border-b px-3 py-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
                 <button
                   onClick={() => setIsSidebarOpen(false)}
                   className={`rounded-lg border p-2 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
-                  title="Close sidebar"
+                  aria-label="Close navigation menu"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-4 w-4" aria-hidden="true" />
                 </button>
                 <button
                   onClick={() => {
@@ -2622,9 +2659,9 @@ export default function App() {
                     setIsSidebarOpen(false);
                   }}
                   className={`rounded-lg border p-2 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
-                  title="Go to homepage"
+                  aria-label="Go to homepage"
                 >
-                  <Home className="h-4 w-4" />
+                  <Home className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>
 
@@ -2632,18 +2669,18 @@ export default function App() {
                 {user ? (
                   <div className={`mb-3 rounded-xl border p-3 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
                     <div className="flex items-center gap-2 min-w-0">
-                      <User className="h-4 w-4 flex-shrink-0 text-indigo-500" />
+                      <User className="h-4 w-4 flex-shrink-0 text-indigo-500" aria-hidden="true" />
                       <span className="text-sm font-semibold truncate">{user.displayName || user.email}</span>
                     </div>
                     <div className="mt-1.5 flex items-center gap-1.5">
                       {syncStatus === 'syncing' ? (
-                        <><LoaderCircle className="h-3 w-3 animate-spin text-indigo-400" /><span className="text-xs text-indigo-400">Syncing…</span></>
+                        <><LoaderCircle className="h-3 w-3 animate-spin text-indigo-400" aria-hidden="true" /><span className="text-xs text-indigo-400">Syncing…</span></>
                       ) : syncStatus === 'done' ? (
-                        <><Cloud className="h-3 w-3 text-emerald-400" /><span className="text-xs text-emerald-400">Synced</span></>
+                        <><Cloud className="h-3 w-3 text-emerald-400" aria-hidden="true" /><span className="text-xs text-emerald-400">Synced</span></>
                       ) : syncStatus === 'error' ? (
-                        <><CloudOff className="h-3 w-3 text-rose-400" /><span className="text-xs text-rose-400">Sync error</span></>
+                        <><CloudOff className="h-3 w-3 text-rose-400" aria-hidden="true" /><span className="text-xs text-rose-400">Sync error</span></>
                       ) : (
-                        <span className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Cloud sync enabled</span>
+                        <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Cloud sync enabled</span>
                       )}
                     </div>
                   </div>
@@ -2652,7 +2689,7 @@ export default function App() {
                     onClick={() => { setShowAuthModal(true); setIsSidebarOpen(false); }}
                     className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-3 text-sm font-bold text-white hover:bg-indigo-700"
                   >
-                    <LogIn className="h-4 w-4" />
+                    <LogIn className="h-4 w-4" aria-hidden="true" />
                     <span>Sign In / Create Account</span>
                   </button>
                 ) : null}
@@ -2663,7 +2700,7 @@ export default function App() {
                   className={`mb-2 flex w-full items-center justify-between rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
                 >
                   <span>Select Set</span>
-                  {sidebarSection === 'sets' ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  {sidebarSection === 'sets' ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
                 </button>
 
                 {sidebarSection === 'sets' ? (
@@ -2691,16 +2728,16 @@ export default function App() {
                             <button
                               onClick={() => handleEditSet(set)}
                               className={`rounded-md border p-1 ${isDarkMode ? 'border-indigo-500 text-indigo-300 hover:bg-indigo-900/30' : 'border-indigo-300 text-indigo-700 hover:bg-indigo-50'}`}
-                              title="Edit set"
+                              aria-label={`Edit set ${set.label}`}
                             >
-                              <Pencil className="h-5 w-5" strokeWidth={2.5} />
+                              <Pencil className="h-5 w-5" strokeWidth={2.5} aria-hidden="true" />
                             </button>
                             <button
                               onClick={() => setSetDeleteCandidate(set)}
                               className={`rounded-md border p-1 ${isDarkMode ? 'border-rose-500 text-rose-300 hover:bg-rose-900/30' : 'border-rose-300 text-rose-700 hover:bg-rose-50'}`}
-                              title="Delete set"
+                              aria-label={`Delete set ${set.label}`}
                             >
-                              <Trash2 className="h-5 w-5" strokeWidth={2.5} />
+                              <Trash2 className="h-5 w-5" strokeWidth={2.5} aria-hidden="true" />
                             </button>
                           </>
                         ) : null}
@@ -2716,7 +2753,7 @@ export default function App() {
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
                 >
-                  <Plus className="h-4 w-4" />
+                  <Plus className="h-4 w-4" aria-hidden="true" />
                   <span>Create New Set</span>
                 </button>
 
@@ -2727,7 +2764,7 @@ export default function App() {
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
                 >
-                  <BarChart2 className="h-4 w-4" />
+                  <BarChart2 className="h-4 w-4" aria-hidden="true" />
                   <span>Stats</span>
                 </button>
 
@@ -2736,7 +2773,7 @@ export default function App() {
                     onClick={() => { setAppPage('profile'); setIsSidebarOpen(false); }}
                     className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
                   >
-                    <User className="h-4 w-4" />
+                    <User className="h-4 w-4" aria-hidden="true" />
                     <span>Profile</span>
                   </button>
                 ) : null}
@@ -2748,7 +2785,7 @@ export default function App() {
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
                 >
-                  <Settings className="h-4 w-4" />
+                  <Settings className="h-4 w-4" aria-hidden="true" />
                   <span>Settings</span>
                 </button>
 
@@ -2759,7 +2796,7 @@ export default function App() {
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
                 >
-                  <CircleHelp className="h-4 w-4" />
+                  <CircleHelp className="h-4 w-4" aria-hidden="true" />
                   <span>Watch Tutorial</span>
                 </button>
 
@@ -2770,7 +2807,7 @@ export default function App() {
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
                 >
-                  <Users className="h-4 w-4" />
+                  <Users className="h-4 w-4" aria-hidden="true" />
                   <span>About</span>
                 </button>
               </div>
@@ -2780,7 +2817,7 @@ export default function App() {
                     onClick={handleSignOut}
                     className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-sm font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
                   >
-                    <LogOut className="h-4 w-4" />
+                    <LogOut className="h-4 w-4" aria-hidden="true" />
                     <span>Sign Out</span>
                   </button>
                 </div>
@@ -2812,11 +2849,11 @@ export default function App() {
       ) : null}
 
       {pendingSuccessSet ? (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4">
-          <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
-            <h2 className="text-xl font-black tracking-tight">
-              {pendingSuccessSet.isEdit ? 'Set updated!' : 'Congrats on your new set!'}
-            </h2>
+        <Modal
+          title={pendingSuccessSet.isEdit ? 'Set updated!' : 'Congrats on your new set!'}
+          onClose={() => { setPendingSuccessSet(null); setAppPage('learn'); }}
+          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+        >
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               {pendingSuccessSet.isEdit
                 ? `\u201c${pendingSuccessSet.title}\u201d has been updated. ${
@@ -2847,14 +2884,16 @@ export default function App() {
                 Not Now
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       ) : null}
 
       {setDeleteCandidate ? (
-        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/55 p-4">
-          <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
-            <h2 className="text-xl font-black tracking-tight">Delete Set?</h2>
+        <Modal
+          title="Delete Set?"
+          onClose={() => setSetDeleteCandidate(null)}
+          zIndexClassName="z-[85]"
+          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+        >
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               Are you sure you want to delete "{setDeleteCandidate.label}"? This also removes all saved baselines for that set.
             </p>
@@ -2872,14 +2911,15 @@ export default function App() {
                 Cancel
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       ) : null}
 
       {pendingImportData ? (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4">
-          <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
-            <h2 className="text-xl font-black tracking-tight">Import Backup</h2>
+        <Modal
+          title="Import Backup"
+          onClose={() => setPendingImportData(null)}
+          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+        >
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               Found <strong>{pendingImportData.customSets?.length ?? 0} set(s)</strong> and{' '}
               <strong>{pendingImportData.references?.length ?? 0} baseline(s)</strong> in this file.
@@ -2908,14 +2948,15 @@ export default function App() {
                 Cancel
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       ) : null}
 
       {showAllBaselinesModal ? (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4">
-          <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
-            <h2 className="text-xl font-black tracking-tight">All Baselines Recorded!</h2>
+        <Modal
+          title="All Baselines Recorded!"
+          onClose={() => setShowAllBaselinesModal(false)}
+          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+        >
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               All {activeWords.length} sign{activeWords.length !== 1 ? 's' : ''} now have baselines recorded. Ready to practice?
             </p>
@@ -2936,14 +2977,15 @@ export default function App() {
                 Keep Recording
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       ) : null}
 
       {showPracticeWithMissingModal ? (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4">
-          <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
-            <h2 className="text-xl font-black tracking-tight">{missingBaselineCount} Baseline{missingBaselineCount !== 1 ? 's' : ''} Missing</h2>
+        <Modal
+          title={`${missingBaselineCount} Baseline${missingBaselineCount !== 1 ? 's' : ''} Missing`}
+          onClose={() => setShowPracticeWithMissingModal(false)}
+          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+        >
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               {missingBaselineCount} sign{missingBaselineCount !== 1 ? "s don't" : " doesn't"} have a baseline yet and won't appear in practice. You'll practice with the {wordsWithBaseline.length} recorded sign{wordsWithBaseline.length !== 1 ? 's' : ''}. Continue?
             </p>
@@ -2964,14 +3006,15 @@ export default function App() {
                 Cancel
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       ) : null}
 
       {showPracticeInstructions ? (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4">
-          <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
-            <h2 className="text-xl font-black tracking-tight">How Practice Works</h2>
+        <Modal
+          title="How Practice Works"
+          onClose={() => setShowPracticeInstructions(false)}
+          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+        >
             <ol className={`mt-4 list-decimal space-y-2 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               <li>Click <strong>Check My Sign</strong> — a <strong>1.5-second countdown</strong> gives you time to get ready.</li>
               <li>The app <strong>records for 1 second</strong> — perform your sign during this window.</li>
@@ -2987,14 +3030,15 @@ export default function App() {
                 Got It
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       ) : null}
 
       {showRecordingInstructions ? (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4">
-          <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
-            <h2 className="text-xl font-black tracking-tight">How Baseline Recording Works</h2>
+        <Modal
+          title="How Baseline Recording Works"
+          onClose={() => setShowRecordingInstructions(false)}
+          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+        >
             <ol className={`mt-4 list-decimal space-y-2 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               <li>A <strong>1.5-second countdown</strong> gives you time to get into position.</li>
               <li>The app then <strong>records for 1 second</strong> — perform your sign during this window.</li>
@@ -3019,17 +3063,23 @@ export default function App() {
                 Cancel
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       ) : null}
 
       {showAuthModal ? (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4">
-          <div className={`w-full max-w-sm rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
+        <Modal
+          onClose={() => { setShowAuthModal(false); setAuthError(''); }}
+          labelledBy="auth-modal-title"
+          panelClassName={`w-full max-w-sm rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+        >
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-xl font-black">{authMode === 'signin' ? 'Sign In' : 'Create Account'}</h2>
-              <button onClick={() => { setShowAuthModal(false); setAuthError(''); }} className={`rounded-lg p-1 ${isDarkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
-                <X className="h-5 w-5" />
+              <h2 id="auth-modal-title" className="text-xl font-black">{authMode === 'signin' ? 'Sign In' : 'Create Account'}</h2>
+              <button
+                onClick={() => { setShowAuthModal(false); setAuthError(''); }}
+                aria-label="Close sign-in dialog"
+                className={`rounded-lg p-1 ${isDarkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
               </button>
             </div>
 
@@ -3054,13 +3104,15 @@ export default function App() {
                 </button>
                 <div className="my-4 flex items-center gap-3">
                   <div className={`flex-1 border-t ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
-                  <span className={`text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>or</span>
+                  <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>or</span>
                   <div className={`flex-1 border-t ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
                 </div>
                 <div className="space-y-3">
                   <input
                     type="email"
                     placeholder="Email"
+                    aria-label="Email address"
+                    autoComplete="email"
                     value={authEmail}
                     onChange={(e) => setAuthEmail(e.target.value)}
                     className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 ${isDarkMode ? 'border-slate-600 bg-slate-700 text-slate-100 placeholder:text-slate-500' : 'border-slate-300 bg-white text-slate-900'}`}
@@ -3068,13 +3120,15 @@ export default function App() {
                   <input
                     type="password"
                     placeholder={authMode === 'signup' ? 'Password (min 8 chars)' : 'Password'}
+                    aria-label={authMode === 'signup' ? 'Password, minimum 8 characters' : 'Password'}
+                    autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
                     value={authPassword}
                     onChange={(e) => setAuthPassword(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') authMode === 'signin' ? handleSignInEmail() : handleSignUpEmail(); }}
                     className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 ${isDarkMode ? 'border-slate-600 bg-slate-700 text-slate-100 placeholder:text-slate-500' : 'border-slate-300 bg-white text-slate-900'}`}
                   />
                 </div>
-                {authError ? <p className="mt-2 text-xs text-rose-500">{authError}</p> : null}
+                {authError ? <p role="alert" className="mt-2 text-xs text-rose-500">{authError}</p> : null}
                 <button
                   onClick={authMode === 'signin' ? handleSignInEmail : handleSignUpEmail}
                   disabled={authSubmitting || !authEmail || !authPassword}
@@ -3093,8 +3147,7 @@ export default function App() {
                 </p>
               </>
             )}
-          </div>
-        </div>
+        </Modal>
       ) : null}
 
       {showTutorial && view === 'app' ? (
@@ -3106,12 +3159,17 @@ export default function App() {
             />
           ) : null}
           <div className="fixed inset-x-4 bottom-6 mx-auto max-w-md sm:bottom-10">
-            <div className={`rounded-2xl border p-5 shadow-2xl ${isDarkMode ? 'border-indigo-400/40 bg-slate-800 text-slate-100' : 'border-indigo-200 bg-white text-slate-900'}`}>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="tutorial-step-title"
+              className={`rounded-2xl border p-5 shadow-2xl ${isDarkMode ? 'border-indigo-400/40 bg-slate-800 text-slate-100' : 'border-indigo-200 bg-white text-slate-900'}`}
+            >
               <div className="mb-3 flex items-center justify-between">
                 <p className="text-xs font-bold uppercase tracking-widest text-indigo-500">Quick Start</p>
-                <span className={`text-xs font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{tutorialStep + 1} of {TUTORIAL_STEPS.length}</span>
+                <span className={`text-xs font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Step {tutorialStep + 1} of {TUTORIAL_STEPS.length}</span>
               </div>
-              <h2 className="text-xl font-black tracking-tight">{TUTORIAL_STEPS[tutorialStep].title}</h2>
+              <h2 id="tutorial-step-title" className="text-xl font-black tracking-tight">{TUTORIAL_STEPS[tutorialStep].title}</h2>
               <p className={`mt-2 text-sm leading-6 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{TUTORIAL_STEPS[tutorialStep].body}</p>
               <div className="mt-5 flex items-center justify-between gap-2">
                 <button

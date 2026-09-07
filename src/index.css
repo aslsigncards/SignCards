@@ -1,4 +1,55 @@
 @import "tailwindcss";
+
+/* Visible keyboard focus on every interactive element (WCAG 2.4.7). */
+:focus-visible {
+  outline: 3px solid #4f46e5;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Respect users who ask for less animation (WCAG 2.3.3). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Available to screen readers only, until focused. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.skip-link:focus {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 200;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  clip: auto;
+  overflow: visible;
+  white-space: normal;
+  border-radius: 0.5rem;
+  background: #4f46e5;
+  color: #fff;
+  font-weight: 700;
+}
+
 :root {
   --text: #6b6375;
   --text-h: #08060d;
