@@ -28,6 +28,7 @@ import {
   Settings,
   Shuffle,
   Sun,
+  TriangleAlert,
   Trash2,
   Upload,
   Users,
@@ -117,6 +118,7 @@ export default function App() {
   const [cameraLost, setCameraLost] = useState(false);
   const [matchFeatures, setMatchFeatures] = useState(DEFAULT_MATCH_FEATURES);
   const [showMatchFeatures, setShowMatchFeatures] = useState(false);
+  const [showMatchFeatureWarning, setShowMatchFeatureWarning] = useState(false);
   const [showFaceGuide, setShowFaceGuide] = useState(false);
   const [faceBox, setFaceBox] = useState(null);
   const [practiceOrder, setPracticeOrder] = useState('ordered');
@@ -224,6 +226,15 @@ export default function App() {
   const baselineCount = wordsWithBaseline.length;
   const allBaselinesReady = missingBaselineCount === 0;
   const enabledMatchCount = MATCH_FEATURE_LIST.filter((f) => matchFeatures[f.key] !== false).length;
+
+  // Blocks leaving Settings while every matching check is off, since practice could never be scored.
+  const navigateAwayFromSettings = (action) => {
+    if (appPage === 'settings' && enabledMatchCount === 0) {
+      setShowMatchFeatureWarning(true);
+      return;
+    }
+    action();
+  };
 
   const liveStatus = practiceResult
     ? `${practiceResult.passed ? 'Pass' : 'Not quite'}. Score ${(practiceResult.similarity * 100).toFixed(0)} percent.${practiceResult.notes?.length ? ` ${practiceResult.notes.join(' ')}` : ''}`
@@ -944,7 +955,7 @@ export default function App() {
 
     setPendingImportData(null);
     pushDebugLog(`Import complete (${mode} mode). ${(data.customSets || []).length} set(s) processed.`);
-    window.alert(`Import complete! ${(data.customSets || []).length} set(s) imported.`);
+    window.alert(`Import complete. ${(data.customSets || []).length} set(s) imported.`);
   };
 
   const enterPractice = () => {
@@ -1440,7 +1451,7 @@ export default function App() {
             type="button"
             data-tour="menu"
             className="flex cursor-pointer items-center gap-2"
-            onClick={() => setIsSidebarOpen(true)}
+            onClick={() => navigateAwayFromSettings(() => setIsSidebarOpen(true))}
             aria-expanded={isSidebarOpen}
             aria-label="Open navigation menu"
           >
@@ -1471,22 +1482,20 @@ export default function App() {
 
       {view === 'landing' ? (
         <main id="main-content" tabIndex={-1}>
-          <section className="w-full px-6 pb-16 pt-20 text-center">
-            <h1 className={`mx-auto max-w-3xl text-5xl font-black leading-tight tracking-tight md:text-6xl ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
-              Master American Sign Language with{' '}
-              <span className={isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}>Personalized</span>{' '}
-              AI Verification.
+          <section className="w-full px-6 pb-14 pt-16 text-center">
+            <h1 className={`mx-auto max-w-2xl text-4xl font-semibold leading-tight tracking-tight md:text-[2.75rem] ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
+              Learn American Sign Language with fully customizable flashcards
             </h1>
-            <p className={`mx-auto mt-6 max-w-2xl text-xl leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-              Record your own baseline signs, build custom decks, and let real-time spatial tracking verify your accuracy frame-by-frame.
+            <p className={`mx-auto mt-5 max-w-2xl text-lg leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+              Record your own baseline signs, build custom decks, and use real-time hand tracking to check your accuracy frame-by-frame.
             </p>
-            <div className="mt-10 flex justify-center">
+            <div className="mt-8 flex justify-center">
               <button
                 onClick={() => setView('app')}
-                className={`group flex items-center space-x-2 rounded-xl bg-indigo-600 px-8 py-4 text-lg font-semibold text-white shadow-lg transition-all hover:bg-indigo-700 hover:shadow-xl ${isDarkMode ? 'shadow-indigo-900/60' : 'shadow-indigo-200'}`}
+                className="flex items-center gap-2 rounded-md border border-indigo-700 bg-indigo-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-indigo-700"
               >
                 <span>Launch Flashcards</span>
-                <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" aria-hidden="true" />
+                <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
             {!user && !authLoading ? (
@@ -1497,7 +1506,9 @@ export default function App() {
                 >
                   Sign in or create an account
                 </button>
-                {' '}to sync your baselines and progress across devices.
+                {' '}to sync your baselines and progress across devices. An account is optional — SignCards
+                works fully offline — but signing in reduces the risk of losing your card data if this
+                device's storage is ever cleared.
               </p>
             ) : user ? (
               <p className={`mt-5 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -1506,23 +1517,29 @@ export default function App() {
             ) : null}
           </section>
 
-          <section className={`border-y py-16 ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`} aria-labelledby="features-heading">
+          <section className={`border-y py-12 ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`} aria-labelledby="features-heading">
             <h2 id="features-heading" className="sr-only">Features</h2>
-            <div className="mx-auto grid max-w-5xl gap-8 px-4 md:grid-cols-3">
-              <div className={`rounded-xl border p-6 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-                <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-lg ${isDarkMode ? 'bg-indigo-900 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}><Camera aria-hidden="true" /></div>
-                <h3 className="mb-2 text-xl font-bold">Personal Baseline Matching</h3>
-                <p className={isDarkMode ? 'text-slate-400' : 'text-slate-600'}>Compares your live hand spatial angles against your own recorded baselines rather than generic datasets.</p>
+            <div className="mx-auto grid max-w-5xl gap-6 px-4 md:grid-cols-3">
+              <div className={`border-t-2 pt-4 ${isDarkMode ? 'border-indigo-500' : 'border-indigo-600'}`}>
+                <div className={`mb-2 flex items-center gap-2 ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>
+                  <Camera className="h-5 w-5" aria-hidden="true" />
+                  <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Personal Baseline Matching</h3>
+                </div>
+                <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Compares your live hand spatial angles against your own recorded baselines rather than generic datasets.</p>
               </div>
-              <div className={`rounded-xl border p-6 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-                <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-lg ${isDarkMode ? 'bg-indigo-900 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}><Layers aria-hidden="true" /></div>
-                <h3 className="mb-2 text-xl font-bold">Custom Vocab Bundles</h3>
-                <p className={isDarkMode ? 'text-slate-400' : 'text-slate-600'}>Create target list decks effortlessly or import preset sequences mapped out directly by campus clubs.</p>
+              <div className={`border-t-2 pt-4 ${isDarkMode ? 'border-indigo-500' : 'border-indigo-600'}`}>
+                <div className={`mb-2 flex items-center gap-2 ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>
+                  <Layers className="h-5 w-5" aria-hidden="true" />
+                  <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Custom Vocab Bundles</h3>
+                </div>
+                <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Build your own card sets, or use the included fingerspelling and numbers decks.</p>
               </div>
-              <div className={`rounded-xl border p-6 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-100 bg-slate-50'}`}>
-                <div className={`mb-4 flex h-12 w-12 items-center justify-center rounded-lg ${isDarkMode ? 'bg-indigo-900 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}><Zap aria-hidden="true" /></div>
-                <h3 className="mb-2 text-xl font-bold">Optional Cloud Sync</h3>
-                <p className={isDarkMode ? 'text-slate-400' : 'text-slate-600'}>No login required. Data lives locally by default. Sign in to back up and sync your baselines across devices with encrypted cloud storage.</p>
+              <div className={`border-t-2 pt-4 ${isDarkMode ? 'border-indigo-500' : 'border-indigo-600'}`}>
+                <div className={`mb-2 flex items-center gap-2 ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>
+                  <Cloud className="h-5 w-5" aria-hidden="true" />
+                  <h3 className={`text-base font-semibold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Optional Cloud Sync</h3>
+                </div>
+                <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>No login required. Data lives locally by default. Sign in to back up and sync your baselines across devices.</p>
               </div>
             </div>
           </section>
@@ -1581,7 +1598,7 @@ export default function App() {
                 <div
                   role="menu"
                   onKeyDown={(e) => { if (e.key === 'Escape') setIsOverflowMenuOpen(false); }}
-                  className={`absolute right-2 top-full z-[65] mt-1 w-56 overflow-hidden rounded-xl border shadow-xl ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-white'}`}
+                  className={`absolute right-2 top-full z-[65] mt-1 w-56 overflow-hidden rounded-md border shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-white'}`}
                 >
                   {workflowPhase === 'baseline' ? (
                     <button
@@ -1616,7 +1633,7 @@ export default function App() {
                       onClick={() => { handleEditSet(activeSetOption); setIsOverflowMenuOpen(false); }}
                       className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold ${isDarkMode ? 'text-slate-200 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50'}`}
                     >
-                      <Pencil className="h-4 w-4 text-indigo-500" aria-hidden="true" />
+                      <Pencil className={`h-4 w-4 ${isDarkMode ? 'text-indigo-400' : 'text-indigo-600'}`} aria-hidden="true" />
                       Edit Set
                     </button>
                   ) : null}
@@ -1668,9 +1685,9 @@ export default function App() {
             />
 
             {/* Word overlay */}
-            <div className="absolute left-3 top-3 rounded-xl bg-black/65 px-3 py-2 text-white backdrop-blur-md">
+            <div className="absolute left-3 top-3 rounded-md bg-black/65 px-3 py-2 text-white backdrop-blur-md">
               <p className="text-[10px] font-semibold uppercase tracking-widest opacity-70">Sign this</p>
-              <p className="mt-0.5 text-4xl font-black leading-none tracking-tight">{currentWord}</p>
+              <p className="mt-0.5 text-4xl font-bold leading-none tracking-tight">{currentWord}</p>
               <div className="mt-1.5 flex items-center gap-1.5">
                 <div className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${hasRecordedBaseline(activeReference) ? 'bg-emerald-400' : 'bg-amber-400'}`} />
                 <span className="text-[10px] font-semibold opacity-70">{hasRecordedBaseline(activeReference) ? 'Baseline recorded' : 'Record baseline'}</span>
@@ -1680,7 +1697,7 @@ export default function App() {
             {/* Recording progress */}
             {isActiveRecording ? (
               <div className="absolute bottom-0 left-0 right-0 p-3">
-                <div className="flex items-center gap-3 rounded-xl bg-black/75 px-4 py-2.5 backdrop-blur-sm">
+                <div className="flex items-center gap-3 rounded-md bg-black/75 px-4 py-2.5 backdrop-blur-sm">
                   <span className="h-2 w-2 flex-shrink-0 animate-ping rounded-full bg-rose-500" />
                   <p className="text-xs font-bold uppercase tracking-widest text-rose-400">Recording</p>
                   <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/20">
@@ -1696,16 +1713,16 @@ export default function App() {
             {/* Practice result */}
             {practiceResult && !isActiveRecording ? (
               <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                <div className="rounded-2xl bg-white px-8 py-6 text-center shadow-2xl">
+                <div className="rounded-lg bg-white px-8 py-6 text-center shadow-md">
                   <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full ${practiceResult.passed ? 'bg-emerald-100' : 'bg-amber-100'}`}>
                     {practiceResult.passed
                       ? <CheckCircle2 className="h-8 w-8 text-emerald-600" aria-hidden="true" />
                       : <XCircle className="h-8 w-8 text-amber-500" aria-hidden="true" />}
                   </div>
-                  <p className={`mt-3 text-xl font-black ${practiceResult.passed ? 'text-emerald-700' : 'text-slate-800'}`}>
-                    {practiceResult.passed ? 'Nice work!' : 'Not quite...'}
+                  <p className={`mt-3 text-xl font-bold ${practiceResult.passed ? 'text-emerald-700' : 'text-slate-800'}`}>
+                    {practiceResult.passed ? 'Correct' : 'Not quite'}
                   </p>
-                  <p className="mt-1 text-4xl font-black text-slate-900">{(practiceResult.similarity * 100).toFixed(0)}%</p>
+                  <p className="mt-1 text-4xl font-bold text-slate-900">{(practiceResult.similarity * 100).toFixed(0)}%</p>
                   {practiceResult.notes?.length ? (
                     <ul className="mx-auto mt-3 max-w-xs space-y-1 text-left">
                       {practiceResult.notes.map((note) => (
@@ -1719,7 +1736,7 @@ export default function App() {
                   <div className="mt-5 flex gap-3">
                     <button
                       onClick={() => setPracticeResult(null)}
-                      className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      className="rounded-md border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                     >
                       Try Again
                     </button>
@@ -1728,7 +1745,7 @@ export default function App() {
                         handleValidation(practiceResult.passed, practiceResult.similarity, true);
                         setPracticeResult(null);
                       }}
-                      className={`rounded-xl px-5 py-2.5 text-sm font-bold text-white ${practiceResult.passed ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-700 hover:bg-slate-800'}`}
+                      className={`rounded-md px-5 py-2.5 text-sm font-bold text-white ${practiceResult.passed ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-700 hover:bg-slate-800'}`}
                     >
                       Move On →
                     </button>
@@ -1740,9 +1757,9 @@ export default function App() {
             {/* Buffering countdown */}
             {isBuffering ? (
               <div className="absolute inset-0 flex items-center justify-center bg-black/35">
-                <div className="rounded-2xl bg-white px-6 py-4 text-center shadow-xl">
+                <div className="rounded-lg bg-white px-6 py-4 text-center shadow-sm">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Get Ready</p>
-                  <p className="text-2xl font-black text-slate-900">{bufferSecondsLeft.toFixed(1)}s</p>
+                  <p className="text-2xl font-bold text-slate-900">{bufferSecondsLeft.toFixed(1)}s</p>
                   <p className="mt-1 text-xs text-slate-600">
                     {pendingAction === 'record' ? 'Capturing baseline soon...' : 'Checking answer soon...'}
                   </p>
@@ -1818,7 +1835,7 @@ export default function App() {
                 </p>
                 <button
                   onClick={restartCamera}
-                  className="mt-4 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"
+                  className="mt-4 rounded-md bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"
                 >
                   Reconnect Camera
                 </button>
@@ -1827,7 +1844,7 @@ export default function App() {
 
             {/* Engine error */}
             {engineError ? (
-              <div className="absolute bottom-3 left-3 right-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <div className="absolute bottom-3 left-3 right-3 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                 Camera error: {engineError}
               </div>
             ) : null}
@@ -1848,7 +1865,7 @@ export default function App() {
               <button
                 onClick={() => startBufferedAction('record')}
                 disabled={isBuffering || isRecordingReference || engineLoading || isActiveRecording}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-orange-500 py-3 text-sm font-bold text-white transition-colors hover:bg-orange-600 disabled:cursor-not-allowed"
+                className="flex flex-1 items-center justify-center gap-2 rounded-md bg-orange-500 py-3 text-sm font-bold text-white transition-colors hover:bg-orange-600 disabled:cursor-not-allowed"
               >
                 {engineLoading
                   ? <><LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" /><span>Initializing…</span></>
@@ -1859,7 +1876,7 @@ export default function App() {
               <button
                 onClick={() => startBufferedAction('check')}
                 disabled={isBuffering || !hasRecordedBaseline(activeReference) || engineLoading || !!practiceResult || isActiveRecording}
-                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex flex-1 items-center justify-center gap-2 rounded-md bg-emerald-600 py-3 text-sm font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {engineLoading
                   ? <><LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" /><span>Initializing…</span></>
@@ -1886,7 +1903,7 @@ export default function App() {
         </main>
       ) : appPage === 'create' ? (
         <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] overflow-y-auto p-3 lg:p-4">
-          <section className={`relative mx-auto max-w-4xl rounded-2xl border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
+          <section className={`relative mx-auto max-w-4xl rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-6 flex items-center gap-3">
               <button
                 onClick={() => { resetCreateForm(); setAppPage('learn'); }}
@@ -1894,7 +1911,7 @@ export default function App() {
               >
                 Back
               </button>
-              <h2 className={`text-3xl font-black tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
+              <h2 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
                 {editingSetId ? 'Edit Set' : 'Create New Set'}
               </h2>
             </div>
@@ -1923,7 +1940,7 @@ export default function App() {
                     }, 0);
                   };
                   return (
-                    <div key={card.id} className={`rounded-xl border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+                    <div key={card.id} className={`rounded-md border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
                       <div className="flex items-center gap-2">
                         <input
                           data-card-word
@@ -2036,22 +2053,22 @@ export default function App() {
         </main>
       ) : appPage === 'settings' ? (
         <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
-          <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-2xl border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
+          <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-4 flex items-center gap-3">
               <button
-                onClick={() => setAppPage('learn')}
+                onClick={() => navigateAwayFromSettings(() => setAppPage('learn'))}
                 className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
               >
                 Back
               </button>
-              <h2 className={`text-3xl font-black tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Settings</h2>
+              <h2 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Settings</h2>
             </div>
             <div className="mt-6 space-y-3">
               <button
                 onClick={() => setIsDarkMode((prev) => !prev)}
                 role="switch"
                 aria-checked={isDarkMode}
-                className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
+                className={`flex w-full items-center justify-between rounded-md border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold">
                   <Moon className="h-4 w-4" aria-hidden="true" />
@@ -2066,7 +2083,7 @@ export default function App() {
                 onClick={() => setIsMirrored((prev) => !prev)}
                 role="switch"
                 aria-checked={isMirrored}
-                className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
+                className={`flex w-full items-center justify-between rounded-md border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold">
                   <Camera className="h-4 w-4" aria-hidden="true" />
@@ -2081,7 +2098,7 @@ export default function App() {
                 onClick={() => setShowHandNodes((prev) => !prev)}
                 role="switch"
                 aria-checked={showHandNodes}
-                className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
+                className={`flex w-full items-center justify-between rounded-md border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold">
                   <Users className="h-4 w-4" aria-hidden="true" />
@@ -2096,7 +2113,7 @@ export default function App() {
                 onClick={() => setShowFaceGuide((prev) => !prev)}
                 role="switch"
                 aria-checked={showFaceGuide}
-                className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
+                className={`flex w-full items-center justify-between rounded-md border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold">
                   <User className="h-4 w-4" aria-hidden="true" />
@@ -2111,7 +2128,7 @@ export default function App() {
                 onClick={() => setShowDebugLog((prev) => !prev)}
                 role="switch"
                 aria-checked={showDebugLog}
-                className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
+                className={`flex w-full items-center justify-between rounded-md border px-4 py-3 text-left ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-800'}`}
               >
                 <span className="flex items-center gap-2 text-sm font-semibold">
                   <CircleHelp className="h-4 w-4" aria-hidden="true" />
@@ -2122,7 +2139,7 @@ export default function App() {
                 </span>
               </button>
 
-              <div className={`rounded-xl border ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+              <div className={`rounded-md border ${enabledMatchCount === 0 ? 'border-rose-500 ring-1 ring-rose-500' : isDarkMode ? 'border-slate-600' : 'border-slate-200'} ${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}`}>
                 <button
                   onClick={() => setShowMatchFeatures((prev) => !prev)}
                   aria-expanded={showMatchFeatures}
@@ -2131,7 +2148,13 @@ export default function App() {
                   <span className="flex items-center gap-2 text-sm font-semibold">
                     <Zap className="h-4 w-4" aria-hidden="true" />
                     <span>Sign Matching Features</span>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${enabledMatchCount === MATCH_FEATURE_LIST.length ? (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-600') : 'bg-amber-500 text-white'}`}>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      enabledMatchCount === 0
+                        ? 'bg-rose-600 text-white'
+                        : enabledMatchCount === MATCH_FEATURE_LIST.length
+                          ? (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-600')
+                          : 'bg-amber-500 text-white'
+                    }`}>
                       {enabledMatchCount}/{MATCH_FEATURE_LIST.length}
                     </span>
                   </span>
@@ -2143,6 +2166,12 @@ export default function App() {
                     <p className={`mb-3 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                       Turn individual checks off to isolate problems. Remaining checks are re-weighted automatically, so scores stay on the same scale.
                     </p>
+                    {enabledMatchCount === 0 ? (
+                      <div className={`mb-3 flex items-start gap-2 rounded-lg border border-rose-500 px-3 py-2 text-xs font-semibold ${isDarkMode ? 'bg-rose-950/40 text-rose-300' : 'bg-rose-50 text-rose-700'}`}>
+                        <TriangleAlert className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                        <span>At least one matching feature must stay on. With everything off, practice attempts cannot be scored.</span>
+                      </div>
+                    ) : null}
                     <div className="space-y-2">
                       {MATCH_FEATURE_LIST.map((feature) => {
                         const enabled = matchFeatures[feature.key] !== false;
@@ -2165,13 +2194,22 @@ export default function App() {
                         );
                       })}
                     </div>
-                    <button
-                      onClick={() => setMatchFeatures(DEFAULT_MATCH_FEATURES)}
-                      disabled={enabledMatchCount === MATCH_FEATURE_LIST.length}
-                      className={`mt-3 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-                    >
-                      Enable all
-                    </button>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => setMatchFeatures(DEFAULT_MATCH_FEATURES)}
+                        disabled={enabledMatchCount === MATCH_FEATURE_LIST.length}
+                        className={`rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+                      >
+                        Enable all
+                      </button>
+                      <button
+                        onClick={() => setMatchFeatures(Object.fromEntries(MATCH_FEATURE_LIST.map((f) => [f.key, false])))}
+                        disabled={enabledMatchCount === 0}
+                        className={`rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-40 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-100'}`}
+                      >
+                        Disable all
+                      </button>
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -2246,7 +2284,7 @@ export default function App() {
 
         return (
           <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
-            <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-2xl border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
+            <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
               <div className="mb-5 flex items-center gap-3">
                 <button
                   onClick={() => setAppPage('learn')}
@@ -2254,7 +2292,7 @@ export default function App() {
                 >
                   Back
                 </button>
-                <h2 className={`text-3xl font-black tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Stats</h2>
+                <h2 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Stats</h2>
               </div>
 
               {/* Set selector */}
@@ -2274,19 +2312,19 @@ export default function App() {
 
               {/* Summary */}
               <div className="mb-6 grid grid-cols-3 gap-3">
-                <div className={`rounded-xl border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+                <div className={`rounded-md border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
                   <p className={`text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Checks</p>
-                  <p className={`mt-1 text-3xl font-black ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{totalAttempts}</p>
+                  <p className={`mt-1 text-3xl font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{totalAttempts}</p>
                 </div>
-                <div className={`rounded-xl border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+                <div className={`rounded-md border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
                   <p className={`text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Pass Rate</p>
-                  <p className={`mt-1 text-3xl font-black ${overallRate !== null ? (overallRate >= 0.65 ? 'text-emerald-500' : 'text-amber-500') : isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  <p className={`mt-1 text-3xl font-bold ${overallRate !== null ? (overallRate >= 0.65 ? 'text-emerald-500' : 'text-amber-500') : isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                     {overallRate !== null ? `${(overallRate * 100).toFixed(0)}%` : '—'}
                   </p>
                 </div>
-                <div className={`rounded-xl border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+                <div className={`rounded-md border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
                   <p className={`text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Active Cards</p>
-                  <p className={`mt-1 text-3xl font-black ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
+                  <p className={`mt-1 text-3xl font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
                     {wordStats.filter((w) => w.attempts > 0).length}
                     <span className={`text-base font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>/{statsWords.length}</span>
                   </p>
@@ -2379,10 +2417,10 @@ export default function App() {
                     {wordStats.map((ws) => (
                       <div
                         key={ws.word}
-                        className={`rounded-xl border p-3.5 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}
+                        className={`rounded-md border p-3.5 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}
                       >
                         <div className="flex items-baseline justify-between gap-3">
-                          <span className={`text-base font-black tracking-wide ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{ws.word}</span>
+                          <span className={`text-base font-bold tracking-wide ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{ws.word}</span>
                           <span className={`flex-shrink-0 text-xs font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                             {ws.attempts === 0 ? 'Not practiced yet' : `${ws.attempts} check${ws.attempts !== 1 ? 's' : ''}`}
                           </span>
@@ -2391,7 +2429,7 @@ export default function App() {
                         <div className="mt-2.5">
                           <div className="flex items-baseline justify-between gap-2">
                             <span className={`text-xs font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Pass rate</span>
-                            <span className={`text-sm font-black ${ws.passRate !== null ? proficiencyTextClass(ws.passRate) : isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                            <span className={`text-sm font-bold ${ws.passRate !== null ? proficiencyTextClass(ws.passRate) : isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                               {ws.passRate !== null ? `${(ws.passRate * 100).toFixed(0)}%` : '—'}
                             </span>
                           </div>
@@ -2408,7 +2446,7 @@ export default function App() {
                         <div className="mt-2.5">
                           <div className="flex items-baseline justify-between gap-2">
                             <span className={`text-xs font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Average match score</span>
-                            <span className={`text-sm font-black ${ws.avgSim !== null ? proficiencyTextClass(ws.avgSim) : isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                            <span className={`text-sm font-bold ${ws.avgSim !== null ? proficiencyTextClass(ws.avgSim) : isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                               {ws.avgSim !== null ? `${(ws.avgSim * 100).toFixed(0)}%` : '—'}
                             </span>
                           </div>
@@ -2431,7 +2469,7 @@ export default function App() {
         );
       })() : appPage === 'profile' ? (
         <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
-          <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-2xl border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
+          <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-5 flex items-center gap-3">
               <button
                 onClick={() => setAppPage('learn')}
@@ -2439,13 +2477,17 @@ export default function App() {
               >
                 Back
               </button>
-              <h2 className={`text-3xl font-black tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Profile</h2>
+              <h2 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Profile</h2>
             </div>
 
             {!user ? (
               <div className="flex flex-col items-center gap-4 py-12">
-                <p className={`text-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Sign in to access cloud sync and account management.</p>
-                <button onClick={() => setShowAuthModal(true)} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700">
+                <p className={`max-w-sm text-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  Signing in is optional. Your data already works fully offline on this device — an account
+                  just adds cloud backup and cross-device sync, so a cleared browser or a new device doesn't
+                  mean losing your baselines and card sets.
+                </p>
+                <button onClick={() => setShowAuthModal(true)} className="flex items-center gap-2 rounded-md bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700">
                   <LogIn className="h-4 w-4" aria-hidden="true" />
                   Sign In / Create Account
                 </button>
@@ -2453,7 +2495,7 @@ export default function App() {
             ) : (
               <>
                 {/* Account info */}
-                <div className={`mb-5 rounded-xl border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+                <div className={`mb-5 rounded-md border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
                   <p className={`mb-3 text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Account</p>
                   <div className="flex items-center gap-3">
                     <div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full ${isDarkMode ? 'bg-slate-700' : 'bg-slate-200'}`}>
@@ -2470,16 +2512,16 @@ export default function App() {
                 </div>
 
                 {/* Cloud sync */}
-                <div className={`mb-5 rounded-xl border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+                <div className={`mb-5 rounded-md border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
                   <p className={`mb-3 text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Cloud Sync</p>
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       {syncStatus === 'syncing' ? (
-                        <><LoaderCircle className="h-4 w-4 animate-spin text-indigo-500" aria-hidden="true" /><span className="text-sm text-indigo-500">Syncing…</span></>
+                        <><LoaderCircle className={`h-4 w-4 animate-spin ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`} aria-hidden="true" /><span className={`text-sm ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>Syncing…</span></>
                       ) : syncStatus === 'done' ? (
-                        <><Cloud className="h-4 w-4 text-emerald-500" aria-hidden="true" /><span className="text-sm text-emerald-500">Synced{lastSyncedAt ? ` · ${new Date(lastSyncedAt).toLocaleTimeString()}` : ''}</span></>
+                        <><Cloud className={`h-4 w-4 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`} aria-hidden="true" /><span className={`text-sm ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Synced{lastSyncedAt ? ` · ${new Date(lastSyncedAt).toLocaleTimeString()}` : ''}</span></>
                       ) : syncStatus === 'error' ? (
-                        <><CloudOff className="h-4 w-4 text-rose-500" aria-hidden="true" /><span className="text-sm text-rose-500">Sync error — try again</span></>
+                        <><CloudOff className={`h-4 w-4 ${isDarkMode ? 'text-rose-400' : 'text-rose-700'}`} aria-hidden="true" /><span className={`text-sm ${isDarkMode ? 'text-rose-400' : 'text-rose-700'}`}>Sync error — try again</span></>
                       ) : (
                         <span className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Not yet synced this session</span>
                       )}
@@ -2497,7 +2539,7 @@ export default function App() {
 
                 {/* Change password (email users only) */}
                 {user.providerData[0]?.providerId === 'password' ? (
-                  <div className={`mb-5 rounded-xl border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+                  <div className={`mb-5 rounded-md border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
                     <p className={`mb-3 text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Change Password</p>
                     <div className="flex gap-2">
                       <input
@@ -2519,12 +2561,20 @@ export default function App() {
                       </button>
                     </div>
                     {changePasswordError ? <p className="mt-2 text-xs text-rose-600">{changePasswordError}</p> : null}
-                    {changePasswordSuccess ? <p className="mt-2 text-xs text-emerald-600">Password updated successfully!</p> : null}
+                    {changePasswordSuccess ? <p className="mt-2 text-xs text-emerald-600">Password updated.</p> : null}
                   </div>
                 ) : null}
 
+                <button
+                  onClick={handleSignOut}
+                  className={`mb-5 flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}
+                >
+                  <LogOut className="h-4 w-4" aria-hidden="true" />
+                  Sign Out
+                </button>
+
                 {/* Danger zone */}
-                <div className={`rounded-xl border p-4 ${isDarkMode ? 'border-rose-900 bg-rose-950/30' : 'border-rose-200 bg-rose-50'}`}>
+                <div className={`rounded-md border p-4 ${isDarkMode ? 'border-rose-900 bg-rose-950/30' : 'border-rose-200 bg-rose-50'}`}>
                   <p className="mb-3 text-sm font-semibold text-rose-600">Danger Zone</p>
                   {showDeleteAccountConfirm ? (
                     <div>
@@ -2570,7 +2620,7 @@ export default function App() {
         </main>
       ) : (
         <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
-          <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-2xl border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
+          <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-4 flex items-center gap-3">
               <button
                 onClick={() => setAppPage('learn')}
@@ -2578,7 +2628,7 @@ export default function App() {
               >
                 Back
               </button>
-              <h2 className={`text-3xl font-black tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>About SignCards</h2>
+              <h2 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>About SignCards</h2>
             </div>
             <p className={`mt-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               SignCards is a local-first ASL training app using personalized baseline verification from webcam hand landmarks.
@@ -2607,17 +2657,35 @@ export default function App() {
                 href="https://github.com/aslsigncards/SignCards"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-1 inline-flex items-center gap-2 text-indigo-400 underline"
+                className={`mt-1 inline-flex items-center gap-2 underline ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}
               >
                 <GitBranch className="h-4 w-4" aria-hidden="true" />
                 <span>aslsigncards/SignCards</span>
               </a>
             </div>
+            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+              <p className="font-semibold">Accessibility and conformance</p>
+              <p className="mt-1 text-sm">
+                SignCards is being developed toward WCAG 2.2 Level AA. The interface supports keyboard
+                navigation, visible focus indicators, reduced-motion preferences, accessible names for
+                controls, live announcements for practice results, and a high-contrast dark mode.
+              </p>
+              <p className="mt-2 text-sm">
+                This is a work in progress and has not been independently audited or certified. The core
+                signing workflow requires a working camera and enough vision to see the camera view and
+                visual feedback. Hand tracking and face-position checks run in the browser; video is not
+                sent to SignCards. If you encounter an accessibility barrier, please contact us at{' '}
+                <a href="mailto:aslsigncards@gmail.com" className={`font-semibold underline ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>
+                  aslsigncards@gmail.com
+                </a>{' '}
+                or open an issue in the GitHub repository.
+              </p>
+            </div>
             <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
               <p className="font-semibold">Questions</p>
               <a
                 href="mailto:aslsigncards@gmail.com"
-                className="mt-1 inline-flex items-center gap-2 text-indigo-400 underline"
+                className={`mt-1 inline-flex items-center gap-2 underline ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}
               >
                 <Mail className="h-4 w-4" aria-hidden="true" />
                 <span>aslsigncards@gmail.com</span>
@@ -2640,7 +2708,7 @@ export default function App() {
             aria-modal={isSidebarOpen ? 'true' : undefined}
             aria-label="Main navigation"
             onKeyDown={(e) => { if (e.key === 'Escape') setIsSidebarOpen(false); }}
-            className={`fixed inset-y-0 left-0 z-[75] h-screen w-[360px] max-w-[92vw] border-r shadow-2xl transition-transform duration-300 ${
+            className={`fixed inset-y-0 left-0 z-[75] h-screen w-[360px] max-w-[92vw] border-r shadow-md transition-transform duration-300 ${
               isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'
             } ${isSidebarOpen ? 'translate-x-0 visible' : '-translate-x-full invisible'}`}
           >
@@ -2667,31 +2735,36 @@ export default function App() {
 
               <div className={`flex-1 min-h-0 overflow-y-auto p-3 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
                 {user ? (
-                  <div className={`mb-3 rounded-xl border p-3 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+                  <div className={`mb-3 rounded-md border p-3 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
                     <div className="flex items-center gap-2 min-w-0">
-                      <User className="h-4 w-4 flex-shrink-0 text-indigo-500" aria-hidden="true" />
+                      <User className={`h-4 w-4 flex-shrink-0 ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`} aria-hidden="true" />
                       <span className="text-sm font-semibold truncate">{user.displayName || user.email}</span>
                     </div>
                     <div className="mt-1.5 flex items-center gap-1.5">
                       {syncStatus === 'syncing' ? (
-                        <><LoaderCircle className="h-3 w-3 animate-spin text-indigo-400" aria-hidden="true" /><span className="text-xs text-indigo-400">Syncing…</span></>
+                        <><LoaderCircle className={`h-3 w-3 animate-spin ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`} aria-hidden="true" /><span className={`text-xs ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>Syncing…</span></>
                       ) : syncStatus === 'done' ? (
-                        <><Cloud className="h-3 w-3 text-emerald-400" aria-hidden="true" /><span className="text-xs text-emerald-400">Synced</span></>
+                        <><Cloud className={`h-3 w-3 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`} aria-hidden="true" /><span className={`text-xs ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Synced</span></>
                       ) : syncStatus === 'error' ? (
-                        <><CloudOff className="h-3 w-3 text-rose-400" aria-hidden="true" /><span className="text-xs text-rose-400">Sync error</span></>
+                        <><CloudOff className={`h-3 w-3 ${isDarkMode ? 'text-rose-400' : 'text-rose-700'}`} aria-hidden="true" /><span className={`text-xs ${isDarkMode ? 'text-rose-400' : 'text-rose-700'}`}>Sync error</span></>
                       ) : (
                         <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Cloud sync enabled</span>
                       )}
                     </div>
                   </div>
                 ) : !authLoading ? (
-                  <button
-                    onClick={() => { setShowAuthModal(true); setIsSidebarOpen(false); }}
-                    className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-3 text-sm font-bold text-white hover:bg-indigo-700"
-                  >
-                    <LogIn className="h-4 w-4" aria-hidden="true" />
-                    <span>Sign In / Create Account</span>
-                  </button>
+                  <>
+                    <button
+                      onClick={() => { setShowAuthModal(true); setIsSidebarOpen(false); }}
+                      className="flex w-full items-center justify-center gap-2 rounded-md bg-indigo-600 px-3 py-3 text-sm font-bold text-white hover:bg-indigo-700"
+                    >
+                      <LogIn className="h-4 w-4" aria-hidden="true" />
+                      <span>Sign In / Create Account</span>
+                    </button>
+                    <p className={`mb-3 mt-1.5 text-center text-[11px] leading-snug ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                      Optional — reduces the risk of losing your card data
+                    </p>
+                  </>
                 ) : null}
                 <button
                   onClick={() => {
@@ -2749,6 +2822,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setAppPage('create');
+                    setView('app');
                     setIsSidebarOpen(false);
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
@@ -2760,6 +2834,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setAppPage('stats');
+                    setView('app');
                     setIsSidebarOpen(false);
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
@@ -2768,19 +2843,26 @@ export default function App() {
                   <span>Stats</span>
                 </button>
 
-                {user ? (
-                  <button
-                    onClick={() => { setAppPage('profile'); setIsSidebarOpen(false); }}
-                    className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
-                  >
-                    <User className="h-4 w-4" aria-hidden="true" />
-                    <span>Profile</span>
-                  </button>
-                ) : null}
+                <button
+                  onClick={() => {
+                    if (user) {
+                      setAppPage('profile');
+                      setView('app');
+                    } else {
+                      setShowAuthModal(true);
+                    }
+                    setIsSidebarOpen(false);
+                  }}
+                  className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
+                >
+                  <User className="h-4 w-4" aria-hidden="true" />
+                  <span>Profile</span>
+                </button>
 
                 <button
                   onClick={() => {
                     setAppPage('settings');
+                    setView('app');
                     setIsSidebarOpen(false);
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
@@ -2803,6 +2885,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setAppPage('about');
+                    setView('app');
                     setIsSidebarOpen(false);
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
@@ -2833,7 +2916,7 @@ export default function App() {
             aria-label="Close tooltip"
           />
           <div
-            className={`fixed z-[45] w-72 rounded-xl border p-3 text-xs shadow-2xl ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-200' : 'border-slate-200 bg-white text-slate-700'}`}
+            className={`fixed z-[45] w-72 rounded-md border p-3 text-xs shadow-md ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-200' : 'border-slate-200 bg-white text-slate-700'}`}
             style={{ top: tooltipPosition.top, left: tooltipPosition.left }}
           >
             <p className={`mb-1.5 font-bold text-sm ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Multi-sign</p>
@@ -2850,9 +2933,9 @@ export default function App() {
 
       {pendingSuccessSet ? (
         <Modal
-          title={pendingSuccessSet.isEdit ? 'Set updated!' : 'Congrats on your new set!'}
+          title={pendingSuccessSet.isEdit ? 'Set updated' : 'Set created'}
           onClose={() => { setPendingSuccessSet(null); setAppPage('learn'); }}
-          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+          panelClassName={`w-full max-w-md rounded-lg border p-6 shadow-md ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
         >
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               {pendingSuccessSet.isEdit
@@ -2861,7 +2944,7 @@ export default function App() {
                       ? `${pendingSuccessSet.newCount} card(s) still need a recorded baseline.`
                       : 'All cards already have baselines.'
                   }`
-                : `\u201c${pendingSuccessSet.title}\u201d is ready with ${pendingSuccessSet.wordCount} card(s). Next up: record your sign definitions so the app can verify your accuracy.`}
+                : `\u201c${pendingSuccessSet.title}\u201d is ready with ${pendingSuccessSet.wordCount} card(s). Next, record your sign definitions so the app can verify your accuracy.`}
             </p>
             <div className="mt-5 flex flex-wrap gap-2">
               <button
@@ -2892,7 +2975,7 @@ export default function App() {
           title="Delete Set?"
           onClose={() => setSetDeleteCandidate(null)}
           zIndexClassName="z-[85]"
-          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+          panelClassName={`w-full max-w-md rounded-lg border p-6 shadow-md ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
         >
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               Are you sure you want to delete "{setDeleteCandidate.label}"? This also removes all saved baselines for that set.
@@ -2918,7 +3001,7 @@ export default function App() {
         <Modal
           title="Import Backup"
           onClose={() => setPendingImportData(null)}
-          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+          panelClassName={`w-full max-w-md rounded-lg border p-6 shadow-md ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
         >
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               Found <strong>{pendingImportData.customSets?.length ?? 0} set(s)</strong> and{' '}
@@ -2953,9 +3036,9 @@ export default function App() {
 
       {showAllBaselinesModal ? (
         <Modal
-          title="All Baselines Recorded!"
+          title="All Baselines Recorded"
           onClose={() => setShowAllBaselinesModal(false)}
-          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+          panelClassName={`w-full max-w-md rounded-lg border p-6 shadow-md ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
         >
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               All {activeWords.length} sign{activeWords.length !== 1 ? 's' : ''} now have baselines recorded. Ready to practice?
@@ -2984,7 +3067,7 @@ export default function App() {
         <Modal
           title={`${missingBaselineCount} Baseline${missingBaselineCount !== 1 ? 's' : ''} Missing`}
           onClose={() => setShowPracticeWithMissingModal(false)}
-          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+          panelClassName={`w-full max-w-md rounded-lg border p-6 shadow-md ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
         >
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               {missingBaselineCount} sign{missingBaselineCount !== 1 ? "s don't" : " doesn't"} have a baseline yet and won't appear in practice. You'll practice with the {wordsWithBaseline.length} recorded sign{wordsWithBaseline.length !== 1 ? 's' : ''}. Continue?
@@ -3009,11 +3092,41 @@ export default function App() {
         </Modal>
       ) : null}
 
+      {showMatchFeatureWarning ? (
+        <Modal
+          title="At Least One Matching Feature Is Required"
+          onClose={() => setShowMatchFeatureWarning(false)}
+          panelClassName={`w-full max-w-md rounded-lg border p-6 shadow-md ${isDarkMode ? 'border-rose-500 bg-slate-800 text-slate-100' : 'border-rose-500 bg-white text-slate-900'}`}
+        >
+            <p className={`mt-2 flex items-start gap-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+              <TriangleAlert className="mt-0.5 h-4 w-4 flex-shrink-0 text-rose-500" aria-hidden="true" />
+              <span>
+                All Sign Matching Features are currently off. With everything disabled, practice attempts
+                have nothing to score against. Turn at least one feature back on before leaving Settings.
+              </span>
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                onClick={() => { setMatchFeatures(DEFAULT_MATCH_FEATURES); setShowMatchFeatureWarning(false); }}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700"
+              >
+                Enable All and Continue
+              </button>
+              <button
+                onClick={() => setShowMatchFeatureWarning(false)}
+                className={`rounded-lg border px-4 py-2 text-sm font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}
+              >
+                Stay on Settings
+              </button>
+            </div>
+        </Modal>
+      ) : null}
+
       {showPracticeInstructions ? (
         <Modal
           title="How Practice Works"
           onClose={() => setShowPracticeInstructions(false)}
-          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+          panelClassName={`w-full max-w-md rounded-lg border p-6 shadow-md ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
         >
             <ol className={`mt-4 list-decimal space-y-2 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               <li>Click <strong>Check My Sign</strong> — a <strong>1.5-second countdown</strong> gives you time to get ready.</li>
@@ -3037,7 +3150,7 @@ export default function App() {
         <Modal
           title="How Baseline Recording Works"
           onClose={() => setShowRecordingInstructions(false)}
-          panelClassName={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+          panelClassName={`w-full max-w-md rounded-lg border p-6 shadow-md ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
         >
             <ol className={`mt-4 list-decimal space-y-2 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               <li>A <strong>1.5-second countdown</strong> gives you time to get into position.</li>
@@ -3070,10 +3183,10 @@ export default function App() {
         <Modal
           onClose={() => { setShowAuthModal(false); setAuthError(''); }}
           labelledBy="auth-modal-title"
-          panelClassName={`w-full max-w-sm rounded-2xl border p-6 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
+          panelClassName={`w-full max-w-sm rounded-lg border p-6 shadow-md ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
         >
-            <div className="mb-4 flex items-center justify-between">
-              <h2 id="auth-modal-title" className="text-xl font-black">{authMode === 'signin' ? 'Sign In' : 'Create Account'}</h2>
+            <div className="mb-1 flex items-center justify-between">
+              <h2 id="auth-modal-title" className="text-xl font-bold">{authMode === 'signin' ? 'Sign In' : 'Create Account'}</h2>
               <button
                 onClick={() => { setShowAuthModal(false); setAuthError(''); }}
                 aria-label="Close sign-in dialog"
@@ -3082,6 +3195,11 @@ export default function App() {
                 <X className="h-5 w-5" aria-hidden="true" />
               </button>
             </div>
+            <p className={`mb-4 text-xs leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              An account is optional — SignCards works fully offline without one. Signing in backs up your
+              baselines and card sets to the cloud, so you don't lose them if this device's storage is
+              cleared, and lets you pick up on another device.
+            </p>
 
             {!firebaseConfigured ? (
               <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
@@ -3092,7 +3210,7 @@ export default function App() {
                 <button
                   onClick={handleSignInGoogle}
                   disabled={authSubmitting}
-                  className={`flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold disabled:opacity-50 ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                  className={`flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm font-semibold disabled:opacity-50 ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
                 >
                   <svg className="h-4 w-4" viewBox="0 0 24 24">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -3132,7 +3250,7 @@ export default function App() {
                 <button
                   onClick={authMode === 'signin' ? handleSignInEmail : handleSignUpEmail}
                   disabled={authSubmitting || !authEmail || !authPassword}
-                  className="mt-4 w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                  className="mt-4 w-full rounded-md bg-indigo-600 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
                 >
                   {authSubmitting ? 'Please wait…' : authMode === 'signin' ? 'Sign In' : 'Create Account'}
                 </button>
@@ -3140,7 +3258,7 @@ export default function App() {
                   {authMode === 'signin' ? "Don't have an account? " : 'Already have an account? '}
                   <button
                     onClick={() => { setAuthMode(authMode === 'signin' ? 'signup' : 'signin'); setAuthError(''); }}
-                    className="font-semibold text-indigo-600 underline"
+                    className={`font-semibold underline ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}
                   >
                     {authMode === 'signin' ? 'Create one' : 'Sign in'}
                   </button>
@@ -3154,7 +3272,7 @@ export default function App() {
         <div className="fixed inset-0 z-[80] bg-slate-950/65">
           {tutorialTargetRect ? (
             <div
-              className="pointer-events-none fixed rounded-xl border-2 border-indigo-300 shadow-[0_0_0_9999px_rgba(2,6,23,0.65),0_0_24px_rgba(165,180,252,0.9)] transition-all duration-300"
+              className="pointer-events-none fixed rounded-md border-2 border-indigo-300 shadow-[0_0_0_9999px_rgba(2,6,23,0.65),0_0_24px_rgba(165,180,252,0.9)] transition-all duration-300"
               style={{ top: tutorialTargetRect.top - 6, left: tutorialTargetRect.left - 6, width: tutorialTargetRect.width + 12, height: tutorialTargetRect.height + 12 }}
             />
           ) : null}
@@ -3163,13 +3281,13 @@ export default function App() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="tutorial-step-title"
-              className={`rounded-2xl border p-5 shadow-2xl ${isDarkMode ? 'border-indigo-400/40 bg-slate-800 text-slate-100' : 'border-indigo-200 bg-white text-slate-900'}`}
+              className={`rounded-lg border p-5 shadow-md ${isDarkMode ? 'border-indigo-400/40 bg-slate-800 text-slate-100' : 'border-indigo-200 bg-white text-slate-900'}`}
             >
               <div className="mb-3 flex items-center justify-between">
-                <p className="text-xs font-bold uppercase tracking-widest text-indigo-500">Quick Start</p>
+                <p className={`text-xs font-bold uppercase tracking-widest ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>Quick Start</p>
                 <span className={`text-xs font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Step {tutorialStep + 1} of {TUTORIAL_STEPS.length}</span>
               </div>
-              <h2 id="tutorial-step-title" className="text-xl font-black tracking-tight">{TUTORIAL_STEPS[tutorialStep].title}</h2>
+              <h2 id="tutorial-step-title" className="text-xl font-bold tracking-tight">{TUTORIAL_STEPS[tutorialStep].title}</h2>
               <p className={`mt-2 text-sm leading-6 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{TUTORIAL_STEPS[tutorialStep].body}</p>
               <div className="mt-5 flex items-center justify-between gap-2">
                 <button
