@@ -6,10 +6,47 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="SignCards is a local-first American Sign Language flashcard trainer that checks your signing against baselines you record yourself." />
     <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#4f46e5" />
+    <meta name="robots" content="index, follow" />
+    <!-- TODO: update to your production domain once it's registered. -->
+    <link rel="canonical" href="https://signcards.app/" />
     <title>SignCards — ASL Flashcard Trainer</title>
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SignCards" />
+    <meta property="og:title" content="SignCards — ASL Flashcard Trainer" />
+    <meta property="og:description" content="Record your own ASL baseline signs and get real-time, camera-based feedback on your accuracy. Free, local-first, and open source." />
+    <meta property="og:url" content="https://signcards.app/" />
+    <!-- TODO: add a 1200x630 image at public/og-image.png. -->
+    <meta property="og:image" content="https://signcards.app/og-image.png" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SignCards — ASL Flashcard Trainer" />
+    <meta name="twitter:description" content="Record your own ASL baseline signs and get real-time, camera-based feedback on your accuracy." />
+    <meta name="twitter:image" content="https://signcards.app/og-image.png" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "SignCards",
+        "url": "https://signcards.app/",
+        "description": "A local-first American Sign Language flashcard trainer that records your own baseline signs and checks your accuracy using real-time webcam hand tracking.",
+        "applicationCategory": "EducationalApplication",
+        "operatingSystem": "Any (web browser)",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        }
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
+
