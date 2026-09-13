@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import Webcam from 'react-webcam';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { FilesetResolver, HandLandmarker, FaceDetector } from '@mediapipe/tasks-vision';
 import { db } from './db';
 import {
   ArrowRight,
@@ -1037,6 +1036,7 @@ export default function App() {
     try {
       pushDebugLog('Initializing MediaPipe hand landmarker...');
 
+      const { FilesetResolver, HandLandmarker, FaceDetector } = await import('@mediapipe/tasks-vision');
       const vision = await FilesetResolver.forVisionTasks(
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
       );

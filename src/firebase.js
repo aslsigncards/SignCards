@@ -1,8 +1,5 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
-import { getAnalytics, logEvent } from 'firebase/analytics';
 
 const cfg = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -16,18 +13,41 @@ const cfg = {
 
 export const firebaseConfigured = !!cfg.apiKey;
 
-let auth, firestore, storage, analytics;
+let app, auth;
 if (firebaseConfigured) {
-  const app = initializeApp(cfg);
+  app = initializeApp(cfg);
   auth = getAuth(app);
-  firestore = getFirestore(app);
-  storage = getStorage(app);
-  if (cfg.measurementId) analytics = getAnalytics(app);
 }
 
+// Firestore, Storage, and Analytics are only needed for cloud sync and usage
+// events, not for basic auth state, so they load in their own chunk on first
+// use instead of blocking every page's initial bundle.
+let firestoreModulePromise;
+export function loadFirestore() {
+  if (!firebaseConfigured) return Promise.resolve({ db: null });
+  if (!firestoreModulePromise) {
+    firestoreModulePromise = import('firebase/firestore').then((mod) => ({ ...mod, db: mod.getFirestore(app) }));
+  }
+  return firestoreModulePromise;
+}
+
+let storageModulePromise;
+export function loadStorage() {
+  if (!firebaseConfigured) return Promise.resolve({ storage: null });
+  if (!storageModulePromise) {
+    storageModulePromise = import('firebase/storage').then((mod) => ({ ...mod, storage: mod.getStorage(app) }));
+  }
+  return storageModulePromise;
+}
+
+let analyticsModulePromise;
 /** Fire a GA4 event; no-op when Analytics is not configured. */
 export function logAnalyticsEvent(name, params) {
-  if (analytics) logEvent(analytics, name, params);
+  if (!firebaseConfigured || !cfg.measurementId) return;
+  if (!analyticsModulePromise) {
+    analyticsModulePromise = import('firebase/analytics').then((mod) => ({ ...mod, analytics: mod.getAnalytics(app) }));
+  }
+  analyticsModulePromise.then(({ logEvent, analytics }) => logEvent(analytics, name, params)).catch(() => {});
 }
 
-export { auth, firestore, storage };
+export { auth };

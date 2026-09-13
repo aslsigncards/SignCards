@@ -1,8 +1,4 @@
-import {
-  doc, setDoc, collection, getDocs, writeBatch,
-} from 'firebase/firestore';
-import { ref, uploadString, getBytes } from 'firebase/storage';
-import { firestore, storage } from './firebase';
+import { loadFirestore, loadStorage } from './firebase';
 
 const FLOATS_PER_FRAME = 63; // 21 landmarks × 3 (x, y, z)
 
@@ -59,13 +55,14 @@ const packMotion = (samples) => samples.map((s) => ({
 }));
 
 export async function uploadBaseline(uid, refKey, frames, frames2, timestamp, motion, motion2) {
-  if (!firestore || !storage) return;
+  const [{ doc, setDoc, db }, { ref, uploadString, storage }] = await Promise.all([loadFirestore(), loadStorage()]);
+  if (!db || !storage) return;
   const uploads = [];
   if (frames) uploads.push(uploadString(ref(storage, baselinePath(uid, refKey, 'h1')), framesToBase64(frames)));
   if (frames2) uploads.push(uploadString(ref(storage, baselinePath(uid, refKey, 'h2')), framesToBase64(frames2)));
   await Promise.all(uploads);
   const safe = encodeURIComponent(refKey.replace(/\//g, '__'));
-  await setDoc(doc(firestore, `users/${uid}/baselines/${safe}`), {
+  await setDoc(doc(db, `users/${uid}/baselines/${safe}`), {
     refKey,
     hasH1: !!frames,
     hasH2: !!frames2,
@@ -77,28 +74,31 @@ export async function uploadBaseline(uid, refKey, frames, frames2, timestamp, mo
 }
 
 export async function uploadCustomSet(uid, set) {
-  if (!firestore) return;
+  const { doc, setDoc, db } = await loadFirestore();
+  if (!db) return;
   const { id, ...data } = set;
-  await setDoc(doc(firestore, `users/${uid}/customSets/${id}`), {
+  await setDoc(doc(db, `users/${uid}/customSets/${id}`), {
     ...data,
     localId: id,
     updatedAt: Date.now(),
   });
 }
 
-export function uploadHistoryEntry(uid, entry) {
-  if (!firestore) return Promise.resolve();
+export async function uploadHistoryEntry(uid, entry) {
+  const { doc, setDoc, db } = await loadFirestore();
+  if (!db) return;
   const { id: _id, ...data } = entry;
   // deterministic doc ID prevents duplicates on repeat syncs
   const docId = `${String(data.word).replace(/[^a-zA-Z0-9]/g, '_')}_${data.timestamp}`;
-  return setDoc(doc(firestore, `users/${uid}/history/${docId}`), data).catch(() => {});
+  return setDoc(doc(db, `users/${uid}/history/${docId}`), data).catch(() => {});
 }
 
 // ── Download (delta / lazy) ───────────────────────────────────────────────────
 
 async function fetchCloudBaselineMeta(uid) {
-  if (!firestore) return {};
-  const snap = await getDocs(collection(firestore, `users/${uid}/baselines`));
+  const { collection, getDocs, db } = await loadFirestore();
+  if (!db) return {};
+  const snap = await getDocs(collection(db, `users/${uid}/baselines`));
   const map = {};
   snap.forEach((d) => { map[d.data().refKey] = d.data(); });
   return map;
@@ -106,6 +106,7 @@ async function fetchCloudBaselineMeta(uid) {
 
 async function downloadSlot(uid, refKey, slot) {
   try {
+    const { ref, getBytes, storage } = await loadStorage();
     const buffer = await getBytes(ref(storage, baselinePath(uid, refKey, slot)));
     const b64 = new TextDecoder().decode(buffer);
     return base64ToFrames(b64);
@@ -117,7 +118,9 @@ async function downloadSlot(uid, refKey, slot) {
 // Delta merge: skips baselines where local timestamp ≥ cloud updatedAt.
 // setKeyFilter restricts to one set's baselines (lazy loading on set-select).
 export async function downloadAndMerge(uid, db, setKeyFilter = null) {
-  if (!firestore || !storage) return;
+  const { collection, getDocs, db: firestoreDb } = await loadFirestore();
+  const { storage } = await loadStorage();
+  if (!firestoreDb || !storage) return;
 
   const cloudMeta = await fetchCloudBaselineMeta(uid);
   const localRefs = await db.references.toArray();
@@ -150,7 +153,7 @@ export async function downloadAndMerge(uid, db, setKeyFilter = null) {
   }
 
   // Merge customSets by title (skips sets already present locally)
-  const setsSnap = await getDocs(collection(firestore, `users/${uid}/customSets`));
+  const setsSnap = await getDocs(collection(firestoreDb, `users/${uid}/customSets`));
   for (const setDocSnap of setsSnap.docs) {
     const data = setDocSnap.data();
     const existing = await db.customSets.where('title').equals(data.title).first();
@@ -161,7 +164,7 @@ export async function downloadAndMerge(uid, db, setKeyFilter = null) {
   }
 
   // Merge history additively by (word, timestamp) composite key
-  const histSnap = await getDocs(collection(firestore, `users/${uid}/history`));
+  const histSnap = await getDocs(collection(firestoreDb, `users/${uid}/history`));
   const localHist = await db.history.toArray();
   const localTsSet = new Set(localHist.map((h) => `${h.word}:${h.timestamp}`));
   const toAdd = [];
@@ -179,7 +182,9 @@ export function downloadSetBaselines(uid, setKey, db) {
 }
 
 export async function uploadAllLocalData(uid, db) {
-  if (!firestore || !storage) return;
+  const { doc, writeBatch, db: firestoreDb } = await loadFirestore();
+  const { storage } = await loadStorage();
+  if (!firestoreDb || !storage) return;
   const [refs, sets, hist] = await Promise.all([
     db.references.toArray(),
     db.customSets.toArray(),
@@ -198,11 +203,11 @@ export async function uploadAllLocalData(uid, db) {
 
   // writeBatch is idempotent (deterministic doc IDs), safe to call repeatedly
   for (let i = 0; i < hist.length; i += 499) {
-    const batch = writeBatch(firestore);
+    const batch = writeBatch(firestoreDb);
     hist.slice(i, i + 499).forEach((h) => {
       const { id: _id, ...data } = h;
       const docId = `${String(data.word).replace(/[^a-zA-Z0-9]/g, '_')}_${data.timestamp}`;
-      batch.set(doc(firestore, `users/${uid}/history/${docId}`), data);
+      batch.set(doc(firestoreDb, `users/${uid}/history/${docId}`), data);
     });
     await batch.commit();
   }
