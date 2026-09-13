@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import Webcam from 'react-webcam';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { FilesetResolver, HandLandmarker, FaceDetector } from '@mediapipe/tasks-vision';
@@ -65,11 +66,14 @@ import {
 import { sanitizeImport, isPlainRecord, MAX_IMPORT_BYTES } from './lib/backup';
 import { proficiencyBarClass, proficiencyTextClass, selectNextRandomIndex } from './lib/stats';
 import Modal from './components/Modal';
+import { useDocumentMeta } from './lib/seo';
 
 const FACE_DETECT_INTERVAL = 5; // run face detection every Nth frame
 
 export default function App() {
-  const [view, setView] = useState('landing');
+  const navigate = useNavigate();
+  const location = useLocation();
+  const pathname = location.pathname;
   const [currentSet, setCurrentSet] = useState('fingerspelling');
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isMirrored, setIsMirrored] = useState(true);
@@ -132,7 +136,6 @@ export default function App() {
   const [statsSortDir, setStatsSortDir] = useState('weakest');
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState('signin');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -351,7 +354,7 @@ export default function App() {
       return;
     }
 
-    // Preserve handedness slots directly — Left hand → frames, Right hand → frames2
+    // Preserve handedness slots directly: Left hand to frames, Right hand to frames2
     const saveH1 = h1Frames.length >= 8 ? h1Frames : null;
     const saveH2 = h2Frames.length >= 8 ? h2Frames : null;
     const saveM1 = saveH1 && m1Samples.length >= 8 ? m1Samples : null;
@@ -382,12 +385,12 @@ export default function App() {
 
     if (nextMissingIndex === -1) {
       if (baselineSessionHadMissingRef.current) {
-        // Newly completed all baselines — prompt the user
+        // Newly completed all baselines: prompt the user
         baselineSessionHadMissingRef.current = false;
         pushDebugLog(`All baselines captured for ${freshSet}.`);
         setShowAllBaselinesModal(true);
       } else {
-        // Re-recording mode — cycle to next word
+        // Re-recording mode: cycle to next word
         const currentIdx = freshWords.findIndex((w) => w === currentWordRef.current);
         setCurrentIndex((currentIdx + 1) % freshWords.length);
       }
@@ -487,7 +490,7 @@ export default function App() {
     const mirrorTag = usedMirror ? ' [mirrored]' : '';
     const verdict = similarity >= SEQUENCE_PASS_THRESHOLD ? 'PASS' : 'FAIL';
     pushDebugLog(
-      `Check${mirrorTag} for "${currentWordRef.current}": ${(similarity * 100).toFixed(0)}% (${verdict}, ${best.results.length} hand(s), ${maxCapFrames} frames)${notes.length ? ` — ${notes.join(' ')}` : ''}`
+      `Check${mirrorTag} for "${currentWordRef.current}": ${(similarity * 100).toFixed(0)}% (${verdict}, ${best.results.length} hand(s), ${maxCapFrames} frames)${notes.length ? ` (${notes.join(' ')})` : ''}`
     );
 
     const passed = similarity >= SEQUENCE_PASS_THRESHOLD;
@@ -598,7 +601,7 @@ export default function App() {
     setIsSidebarOpen(false);
     setSidebarSection('none');
     setAppPage('learn');
-    setView('app');
+    navigate('/app');
     if (userRef.current) {
       downloadSetBaselines(userRef.current.uid, setKey, db).catch(() => {});
     }
@@ -693,7 +696,7 @@ export default function App() {
     try {
       await signInWithPopup(auth, new GoogleAuthProvider());
       logAnalyticsEvent('login', { method: 'google' });
-      setShowAuthModal(false);
+      navigate('/app');
       setAuthEmail('');
       setAuthPassword('');
     } catch (e) {
@@ -710,7 +713,7 @@ export default function App() {
     try {
       await signInWithEmailAndPassword(auth, authEmail.trim(), authPassword);
       logAnalyticsEvent('login', { method: 'email' });
-      setShowAuthModal(false);
+      navigate('/app');
       setAuthEmail('');
       setAuthPassword('');
     } catch (e) {
@@ -732,7 +735,7 @@ export default function App() {
     try {
       await createUserWithEmailAndPassword(auth, authEmail.trim(), authPassword);
       logAnalyticsEvent('sign_up', { method: 'email' });
-      setShowAuthModal(false);
+      navigate('/app');
       setAuthEmail('');
       setAuthPassword('');
     } catch (e) {
@@ -1296,25 +1299,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (view === 'landing' && isInterpreterRunningRef.current) {
+    if (pathname !== '/app' && isInterpreterRunningRef.current) {
       stopInterpreter();
     }
-    if (view === 'landing') {
+    if (pathname !== '/app') {
       setIsSidebarOpen(false);
       setSidebarSection('none');
     }
-  }, [view]);
+  }, [pathname]);
 
   useEffect(() => {
-    if (view !== 'app') return;
+    if (pathname !== '/app') return;
     const hasSeenTutorial = window.localStorage.getItem(TUTORIAL_STORAGE_KEY) === '1';
     if (!hasSeenTutorial) {
       setShowTutorial(true);
     }
-  }, [view]);
+  }, [pathname]);
 
   useEffect(() => {
-    if (!showTutorial || view !== 'app') return undefined;
+    if (!showTutorial || pathname !== '/app') return undefined;
     const updateTutorialTarget = () => {
       const target = document.querySelector(TUTORIAL_STEPS[tutorialStep]?.selector);
       if (!target) {
@@ -1327,7 +1330,7 @@ export default function App() {
     updateTutorialTarget();
     window.addEventListener('resize', updateTutorialTarget);
     return () => window.removeEventListener('resize', updateTutorialTarget);
-  }, [showTutorial, tutorialStep, view, workflowPhase]);
+  }, [showTutorial, tutorialStep, pathname, workflowPhase]);
 
   useEffect(() => {
     if (!referencesLoaded) return;
@@ -1423,7 +1426,7 @@ export default function App() {
   }, []);
 
   const startTutorial = () => {
-    setView('app');
+    navigate('/app');
     setAppPage('learn');
     // The tour narrates the baseline-first flow and highlights the learn page controls.
     if (workflowPhase !== 'baseline') switchToBaseline();
@@ -1440,6 +1443,18 @@ export default function App() {
     setTutorialStep(0);
     setTutorialTargetRect(null);
   };
+
+  const routeMeta = pathname === '/about'
+    ? { title: 'About', description: 'SignCards is an open-source, local-first ASL flashcard trainer built with the McMaster ASL Club. Learn about the project and how to get involved.' }
+    : pathname === '/help'
+    ? { title: 'Help & FAQ', description: 'Getting started with SignCards: how baseline recording works, practice mode, custom sets, cloud sync, privacy, and troubleshooting.' }
+    : pathname === '/signin'
+    ? { title: 'Sign In', description: 'Sign in to SignCards to back up your ASL flashcard baselines and sync progress across devices. An account is optional.', noindex: true }
+    : pathname === '/app'
+    ? { title: 'Practice', description: 'Record ASL baseline signs and practice with real-time webcam hand tracking.', noindex: true }
+    : { title: null, description: 'SignCards is a local-first American Sign Language flashcard trainer that records your own baseline signs and checks your accuracy with real-time webcam hand tracking.' };
+
+  useDocumentMeta({ title: routeMeta.title, description: routeMeta.description, path: pathname, noindex: routeMeta.noindex });
 
   return (
     <div className={`${isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} min-h-screen font-sans antialiased`}>
@@ -1460,27 +1475,28 @@ export default function App() {
           </button>
           {!authLoading && (
             user ? (
-              <button
-                onClick={() => { setAppPage('profile'); setView('app'); }}
+              <Link
+                to="/app"
+                onClick={() => setAppPage('profile')}
                 className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
               >
                 <User className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
                 <span className="hidden sm:inline max-w-[120px] truncate">{user.displayName || user.email?.split('@')[0] || 'Account'}</span>
-              </button>
+              </Link>
             ) : (
-              <button
-                onClick={() => setShowAuthModal(true)}
+              <Link
+                to="/signin"
                 className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700"
               >
                 <LogIn className="h-4 w-4" aria-hidden="true" />
                 <span>Sign In</span>
-              </button>
+              </Link>
             )
           )}
         </div>
       </header>
 
-      {view === 'landing' ? (
+      {pathname === '/' ? (
         <main id="main-content" tabIndex={-1}>
           <section className="w-full px-6 pb-14 pt-16 text-center">
             <h1 className={`mx-auto max-w-2xl text-4xl font-semibold leading-tight tracking-tight md:text-[2.75rem] ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
@@ -1490,24 +1506,24 @@ export default function App() {
               Record your own baseline signs, build custom decks, and use real-time hand tracking to check your accuracy frame-by-frame.
             </p>
             <div className="mt-8 flex justify-center">
-              <button
-                onClick={() => setView('app')}
+              <Link
+                to="/app"
                 className="flex items-center gap-2 rounded-md border border-indigo-700 bg-indigo-600 px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-indigo-700"
               >
                 <span>Launch Flashcards</span>
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
-              </button>
+              </Link>
             </div>
             {!user && !authLoading ? (
               <p className={`mt-5 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                <button
-                  onClick={() => setShowAuthModal(true)}
+                <Link
+                  to="/signin"
                   className="font-semibold underline underline-offset-2 hover:text-indigo-600"
                 >
                   Sign in or create an account
-                </button>
-                {' '}to sync your baselines and progress across devices. An account is optional — SignCards
-                works fully offline — but signing in reduces the risk of losing your card data if this
+                </Link>
+                {' '}to sync your baselines and progress across devices. An account is optional: SignCards
+                works fully offline, but signing in reduces the risk of losing your card data if this
                 device's storage is ever cleared.
               </p>
             ) : user ? (
@@ -1543,8 +1559,293 @@ export default function App() {
               </div>
             </div>
           </section>
+
+          <footer className={`border-t px-6 py-8 text-center text-sm ${isDarkMode ? 'border-slate-800 text-slate-500' : 'border-slate-100 text-slate-500'}`}>
+            <nav aria-label="Footer" className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+              <Link to="/help" className="hover:underline">Help & FAQ</Link>
+              <span aria-hidden="true">·</span>
+              <Link to="/about" className="hover:underline">About</Link>
+              <span aria-hidden="true">·</span>
+              <a href="https://github.com/aslsigncards/SignCards" target="_blank" rel="noopener noreferrer" className="hover:underline">GitHub</a>
+            </nav>
+          </footer>
         </main>
-      ) : appPage === 'learn' ? (
+      ) : pathname === '/about' ? (
+        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] overflow-y-auto p-3 lg:p-4">
+          <section className={`mx-auto max-w-4xl rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
+            <div className="mb-4 flex items-center gap-3">
+              <Link
+                to="/"
+                className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+              >
+                Back
+              </Link>
+              <h1 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>About SignCards</h1>
+            </div>
+            <p className={`mt-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+              SignCards is a local-first ASL training app using personalized baseline verification from webcam hand landmarks.
+              Looking for how to use the app instead? Visit the{' '}
+              <Link to="/help" className={`font-semibold underline ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>Help & FAQ page</Link>.
+            </p>
+            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+              <p className="font-semibold">Built with the community</p>
+              <p className="mt-1 text-sm">
+                SignCards is developed in collaboration with the McMaster ASL Club and the learners who
+                test it, report bugs, and suggest signs to add. Their feedback shapes what gets built next.
+              </p>
+            </div>
+            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4" aria-hidden="true" />
+                <p className="font-semibold">Build on it</p>
+              </div>
+              <p className="mt-1 text-sm">
+                The project is open source. Fork it, remix it, or spin it off for another signed language,
+                a different curriculum, or your own club. Pull requests, new card sets, and independent
+                offshoots are all welcome, and you do not need permission to start.
+              </p>
+            </div>
+            <div className={`mt-4 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+              <p className="font-semibold">GitHub Repository</p>
+              <a
+                href="https://github.com/aslsigncards/SignCards"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`mt-1 inline-flex items-center gap-2 underline ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}
+              >
+                <GitBranch className="h-4 w-4" aria-hidden="true" />
+                <span>aslsigncards/SignCards</span>
+              </a>
+            </div>
+            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+              <p className="font-semibold">Accessibility and conformance</p>
+              <p className="mt-1 text-sm">
+                SignCards is being developed toward WCAG 2.2 Level AA. The interface supports keyboard
+                navigation, visible focus indicators, reduced-motion preferences, accessible names for
+                controls, live announcements for practice results, and a high-contrast dark mode.
+              </p>
+              <p className="mt-2 text-sm">
+                This is a work in progress and has not been independently audited or certified. The core
+                signing workflow requires a working camera and enough vision to see the camera view and
+                visual feedback. Hand tracking and face-position checks run in the browser; video is not
+                sent to SignCards. If you encounter an accessibility barrier, please contact us at{' '}
+                <a href="mailto:aslsigncards@gmail.com" className={`font-semibold underline ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>
+                  aslsigncards@gmail.com
+                </a>{' '}
+                or open an issue in the GitHub repository.
+              </p>
+            </div>
+            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+              <p className="font-semibold">Questions</p>
+              <a
+                href="mailto:aslsigncards@gmail.com"
+                className={`mt-1 inline-flex items-center gap-2 underline ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}
+              >
+                <Mail className="h-4 w-4" aria-hidden="true" />
+                <span>aslsigncards@gmail.com</span>
+              </a>
+            </div>
+          </section>
+        </main>
+      ) : pathname === '/help' ? (
+        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] overflow-y-auto p-3 lg:p-4">
+          <section className={`mx-auto max-w-4xl rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
+            <div className="mb-4 flex items-center gap-3">
+              <Link
+                to="/"
+                className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+              >
+                Back
+              </Link>
+              <h1 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Help & FAQ</h1>
+            </div>
+            <p className={`mt-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+              Everything you need to get started recording ASL flashcard baselines and practicing with SignCards.
+            </p>
+
+            <nav aria-label="On this page" className={`mt-5 rounded-lg border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
+              <p className={`mb-2 text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>On this page</p>
+              <ul className={`grid grid-cols-1 gap-1.5 text-sm sm:grid-cols-2 ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>
+                <li><a className="underline" href="#getting-started">Getting started</a></li>
+                <li><a className="underline" href="#recording-baselines">Recording baselines</a></li>
+                <li><a className="underline" href="#practice-mode">Practice mode</a></li>
+                <li><a className="underline" href="#custom-sets">Custom sets</a></li>
+                <li><a className="underline" href="#matching-features">Matching features</a></li>
+                <li><a className="underline" href="#cloud-sync-privacy">Cloud sync & privacy</a></li>
+                <li><a className="underline" href="#accessibility">Accessibility</a></li>
+                <li><a className="underline" href="#troubleshooting">Troubleshooting</a></li>
+              </ul>
+            </nav>
+
+            <section id="getting-started" className="mt-6 scroll-mt-20">
+              <h2 className={`text-xl font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Getting started</h2>
+              <ol className={`mt-2 list-decimal space-y-1.5 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                <li>Open the menu and pick a set, or use the built-in fingerspelling and numbers decks.</li>
+                <li>Record a baseline for each card. This is your personal reference for that sign.</li>
+                <li>Once a card has a baseline, it becomes available in Practice Mode.</li>
+                <li>Use Check My Sign in Practice Mode to compare your live signing against your baseline.</li>
+              </ol>
+            </section>
+
+            <section id="recording-baselines" className="mt-6 scroll-mt-20">
+              <h2 className={`text-xl font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Recording baselines</h2>
+              <ul className={`mt-2 list-disc space-y-1.5 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                <li>A 1.5 second countdown gives you time to get into position before recording starts.</li>
+                <li>The app records for 1 second. Hold static signs steady, or perform the full motion of a dynamic sign.</li>
+                <li>Keep your signing hand clearly visible in frame for the entire recording.</li>
+                <li>You can re-record a baseline at any time from the options menu in Baseline Setup.</li>
+              </ul>
+            </section>
+
+            <section id="practice-mode" className="mt-6 scroll-mt-20">
+              <h2 className={`text-xl font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Practice mode</h2>
+              <ul className={`mt-2 list-disc space-y-1.5 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                <li>Only cards with a recorded baseline appear in Practice Mode.</li>
+                <li>Check My Sign scores your attempt against your own baseline, not a generic dataset.</li>
+                <li>Switch between In Order and Random practice from the header. Random mode weights cards you have gotten wrong more recently more often.</li>
+                <li>Mirror matching also checks the opposite hand, so signing with your other hand than your baseline still works.</li>
+              </ul>
+            </section>
+
+            <section id="custom-sets" className="mt-6 scroll-mt-20">
+              <h2 className={`text-xl font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Custom sets</h2>
+              <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                Build your own card sets from Create New Set. Mark a card as multi-sign for fingerspelled words,
+                compound signs, or short phrases, and list each component sign separated by commas.
+              </p>
+            </section>
+
+            <section id="matching-features" className="mt-6 scroll-mt-20">
+              <h2 className={`text-xl font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Matching features</h2>
+              <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                Settings includes a Sign Matching Features panel where you can turn individual checks
+                (handshape, movement path, finger extension, fingertip spacing, splay angles, finger crossing,
+                thumb position, and height on body) on or off to isolate what is affecting your score. At least
+                one feature must stay enabled.
+              </p>
+            </section>
+
+            <section id="cloud-sync-privacy" className="mt-6 scroll-mt-20">
+              <h2 className={`text-xl font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Cloud sync & privacy</h2>
+              <ul className={`mt-2 list-disc space-y-1.5 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                <li>An account is optional. SignCards works fully offline, with all data stored on your device.</li>
+                <li>Signing in adds cloud backup and sync, reducing the risk of losing your baselines and card sets if this device's storage is cleared.</li>
+                <li>Camera video is processed entirely in your browser and is never uploaded. Only numeric hand and body landmark coordinates are stored.</li>
+                <li>You can export or import your data as a backup file at any time from Settings.</li>
+              </ul>
+            </section>
+
+            <section id="accessibility" className="mt-6 scroll-mt-20">
+              <h2 className={`text-xl font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Accessibility</h2>
+              <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                SignCards is being developed toward WCAG 2.2 Level AA, including keyboard navigation, visible
+                focus indicators, reduced-motion support, and a high-contrast dark mode. See the{' '}
+                <Link to="/about" className={`font-semibold underline ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>About page</Link>{' '}
+                for the full conformance statement.
+              </p>
+            </section>
+
+            <section id="troubleshooting" className="mt-6 scroll-mt-20">
+              <h2 className={`text-xl font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Troubleshooting</h2>
+              <ul className={`mt-2 list-disc space-y-1.5 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                <li>If your camera does not start, check your browser's camera permission for this site and reload the page.</li>
+                <li>Unplugging and replugging an external camera should reconnect automatically; if not, use the Reconnect Camera button.</li>
+                <li>If a baseline is not scoring well, try re-recording it, or turn off individual matching features in Settings to find which check is the issue.</li>
+                <li>Still stuck? Email{' '}
+                  <a href="mailto:aslsigncards@gmail.com" className={`font-semibold underline ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>aslsigncards@gmail.com</a>{' '}
+                  or open an issue on GitHub.
+                </li>
+              </ul>
+            </section>
+          </section>
+        </main>
+      ) : pathname === '/signin' ? (
+        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] overflow-y-auto p-3 lg:p-4">
+          <section className={`mx-auto max-w-sm rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
+            <div className="mb-1 flex items-center justify-between">
+              <h1 className="text-xl font-bold">{authMode === 'signin' ? 'Sign In' : 'Create Account'}</h1>
+              <Link
+                to="/"
+                aria-label="Back to SignCards"
+                className={`rounded-lg p-1 ${isDarkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </Link>
+            </div>
+            <p className={`mb-4 text-xs leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              An account is optional. SignCards works fully offline without one. Signing in backs up your
+              baselines and card sets to the cloud, so you don't lose them if this device's storage is
+              cleared, and lets you pick up on another device.
+            </p>
+
+            {!firebaseConfigured ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+                Firebase is not configured yet. Add your VITE_FIREBASE_* keys to .env.local to enable cloud sync.
+              </p>
+            ) : (
+              <>
+                <button
+                  onClick={handleSignInGoogle}
+                  disabled={authSubmitting}
+                  className={`flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm font-semibold disabled:opacity-50 ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 24 24">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                  </svg>
+                  Continue with Google
+                </button>
+                <div className="my-4 flex items-center gap-3">
+                  <div className={`flex-1 border-t ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
+                  <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>or</span>
+                  <div className={`flex-1 border-t ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
+                </div>
+                <div className="space-y-3">
+                  <input
+                    type="email"
+                    placeholder="Email"
+                    aria-label="Email address"
+                    autoComplete="email"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 ${isDarkMode ? 'border-slate-600 bg-slate-700 text-slate-100 placeholder:text-slate-500' : 'border-slate-300 bg-white text-slate-900'}`}
+                  />
+                  <input
+                    type="password"
+                    placeholder={authMode === 'signup' ? 'Password (min 8 chars)' : 'Password'}
+                    aria-label={authMode === 'signup' ? 'Password, minimum 8 characters' : 'Password'}
+                    autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') authMode === 'signin' ? handleSignInEmail() : handleSignUpEmail(); }}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 ${isDarkMode ? 'border-slate-600 bg-slate-700 text-slate-100 placeholder:text-slate-500' : 'border-slate-300 bg-white text-slate-900'}`}
+                  />
+                </div>
+                {authError ? <p role="alert" className="mt-2 text-xs text-rose-500">{authError}</p> : null}
+                <button
+                  onClick={authMode === 'signin' ? handleSignInEmail : handleSignUpEmail}
+                  disabled={authSubmitting || !authEmail || !authPassword}
+                  className="mt-4 w-full rounded-md bg-indigo-600 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {authSubmitting ? 'Please wait...' : authMode === 'signin' ? 'Sign In' : 'Create Account'}
+                </button>
+                <p className={`mt-3 text-center text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  {authMode === 'signin' ? "Don't have an account? " : 'Already have an account? '}
+                  <button
+                    onClick={() => { setAuthMode(authMode === 'signin' ? 'signup' : 'signin'); setAuthError(''); }}
+                    className={`font-semibold underline ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}
+                  >
+                    {authMode === 'signin' ? 'Create one' : 'Sign in'}
+                  </button>
+                </p>
+              </>
+            )}
+          </section>
+        </main>
+      ) : pathname === '/app' ? (
+        appPage === 'learn' ? (
         <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] flex flex-col">
           {/* Phase header */}
           <div data-tour="phase" className={`relative flex flex-shrink-0 items-center justify-between px-4 py-3 ${workflowPhase === 'baseline' ? 'bg-orange-700' : 'bg-emerald-700'}`}>
@@ -2483,14 +2784,14 @@ export default function App() {
             {!user ? (
               <div className="flex flex-col items-center gap-4 py-12">
                 <p className={`max-w-sm text-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                  Signing in is optional. Your data already works fully offline on this device — an account
+                  Signing in is optional. Your data already works fully offline on this device, and an account
                   just adds cloud backup and cross-device sync, so a cleared browser or a new device doesn't
                   mean losing your baselines and card sets.
                 </p>
-                <button onClick={() => setShowAuthModal(true)} className="flex items-center gap-2 rounded-md bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700">
+                <Link to="/signin" className="flex items-center gap-2 rounded-md bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700">
                   <LogIn className="h-4 w-4" aria-hidden="true" />
                   Sign In / Create Account
-                </button>
+                </Link>
               </div>
             ) : (
               <>
@@ -2521,7 +2822,7 @@ export default function App() {
                       ) : syncStatus === 'done' ? (
                         <><Cloud className={`h-4 w-4 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`} aria-hidden="true" /><span className={`text-sm ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>Synced{lastSyncedAt ? ` · ${new Date(lastSyncedAt).toLocaleTimeString()}` : ''}</span></>
                       ) : syncStatus === 'error' ? (
-                        <><CloudOff className={`h-4 w-4 ${isDarkMode ? 'text-rose-400' : 'text-rose-700'}`} aria-hidden="true" /><span className={`text-sm ${isDarkMode ? 'text-rose-400' : 'text-rose-700'}`}>Sync error — try again</span></>
+                        <><CloudOff className={`h-4 w-4 ${isDarkMode ? 'text-rose-400' : 'text-rose-700'}`} aria-hidden="true" /><span className={`text-sm ${isDarkMode ? 'text-rose-400' : 'text-rose-700'}`}>Sync error, try again</span></>
                       ) : (
                         <span className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Not yet synced this session</span>
                       )}
@@ -2618,80 +2919,21 @@ export default function App() {
             )}
           </section>
         </main>
+      ) : null
       ) : (
-        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
-          <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
-            <div className="mb-4 flex items-center gap-3">
-              <button
-                onClick={() => setAppPage('learn')}
-                className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
-              >
-                Back
-              </button>
-              <h2 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>About SignCards</h2>
-            </div>
-            <p className={`mt-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-              SignCards is a local-first ASL training app using personalized baseline verification from webcam hand landmarks.
+        <main id="main-content" tabIndex={-1} className="flex w-full h-[calc(100vh-4rem)] items-center justify-center p-3 text-center lg:p-4">
+          <div>
+            <h1 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Page not found</h1>
+            <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              The page you're looking for doesn't exist.
             </p>
-            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
-              <p className="font-semibold">Built with the community</p>
-              <p className="mt-1 text-sm">
-                SignCards is developed in collaboration with the McMaster ASL Club and the learners who
-                test it, report bugs, and suggest signs to add. Their feedback shapes what gets built next.
-              </p>
-            </div>
-            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
-              <div className="flex items-center gap-2">
-                <Users className="h-4 w-4" aria-hidden="true" />
-                <p className="font-semibold">Build on it</p>
-              </div>
-              <p className="mt-1 text-sm">
-                The project is open source. Fork it, remix it, or spin it off for another signed language,
-                a different curriculum, or your own club. Pull requests, new card sets, and independent
-                offshoots are all welcome — you do not need permission to start.
-              </p>
-            </div>
-            <div className={`mt-4 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
-              <p className="font-semibold">GitHub Repository</p>
-              <a
-                href="https://github.com/aslsigncards/SignCards"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`mt-1 inline-flex items-center gap-2 underline ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}
-              >
-                <GitBranch className="h-4 w-4" aria-hidden="true" />
-                <span>aslsigncards/SignCards</span>
-              </a>
-            </div>
-            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
-              <p className="font-semibold">Accessibility and conformance</p>
-              <p className="mt-1 text-sm">
-                SignCards is being developed toward WCAG 2.2 Level AA. The interface supports keyboard
-                navigation, visible focus indicators, reduced-motion preferences, accessible names for
-                controls, live announcements for practice results, and a high-contrast dark mode.
-              </p>
-              <p className="mt-2 text-sm">
-                This is a work in progress and has not been independently audited or certified. The core
-                signing workflow requires a working camera and enough vision to see the camera view and
-                visual feedback. Hand tracking and face-position checks run in the browser; video is not
-                sent to SignCards. If you encounter an accessibility barrier, please contact us at{' '}
-                <a href="mailto:aslsigncards@gmail.com" className={`font-semibold underline ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>
-                  aslsigncards@gmail.com
-                </a>{' '}
-                or open an issue in the GitHub repository.
-              </p>
-            </div>
-            <div className={`mt-3 rounded-lg border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
-              <p className="font-semibold">Questions</p>
-              <a
-                href="mailto:aslsigncards@gmail.com"
-                className={`mt-1 inline-flex items-center gap-2 underline ${isDarkMode ? 'text-indigo-400' : 'text-indigo-700'}`}
-              >
-                <Mail className="h-4 w-4" aria-hidden="true" />
-                <span>aslsigncards@gmail.com</span>
-              </a>
-            </div>
-          </section>
+            <Link
+              to="/"
+              className="mt-5 inline-flex items-center gap-2 rounded-md bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700"
+            >
+              Back to SignCards
+            </Link>
+          </div>
         </main>
       )}
 
@@ -2723,7 +2965,7 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => {
-                    setView('landing');
+                    navigate('/');
                     setIsSidebarOpen(false);
                   }}
                   className={`rounded-lg border p-2 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
@@ -2754,15 +2996,16 @@ export default function App() {
                   </div>
                 ) : !authLoading ? (
                   <>
-                    <button
-                      onClick={() => { setShowAuthModal(true); setIsSidebarOpen(false); }}
+                    <Link
+                      to="/signin"
+                      onClick={() => setIsSidebarOpen(false)}
                       className="flex w-full items-center justify-center gap-2 rounded-md bg-indigo-600 px-3 py-3 text-sm font-bold text-white hover:bg-indigo-700"
                     >
                       <LogIn className="h-4 w-4" aria-hidden="true" />
                       <span>Sign In / Create Account</span>
-                    </button>
+                    </Link>
                     <p className={`mb-3 mt-1.5 text-center text-[11px] leading-snug ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                      Optional — reduces the risk of losing your card data
+                      Optional, reduces the risk of losing your card data
                     </p>
                   </>
                 ) : null}
@@ -2822,7 +3065,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setAppPage('create');
-                    setView('app');
+                    navigate('/app');
                     setIsSidebarOpen(false);
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
@@ -2834,7 +3077,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setAppPage('stats');
-                    setView('app');
+                    navigate('/app');
                     setIsSidebarOpen(false);
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
@@ -2847,9 +3090,9 @@ export default function App() {
                   onClick={() => {
                     if (user) {
                       setAppPage('profile');
-                      setView('app');
+                      navigate('/app');
                     } else {
-                      setShowAuthModal(true);
+                      navigate('/signin');
                     }
                     setIsSidebarOpen(false);
                   }}
@@ -2862,7 +3105,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setAppPage('settings');
-                    setView('app');
+                    navigate('/app');
                     setIsSidebarOpen(false);
                   }}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
@@ -2882,17 +3125,23 @@ export default function App() {
                   <span>Watch Tutorial</span>
                 </button>
 
-                <button
-                  onClick={() => {
-                    setAppPage('about');
-                    setView('app');
-                    setIsSidebarOpen(false);
-                  }}
+                <Link
+                  to="/help"
+                  onClick={() => setIsSidebarOpen(false)}
+                  className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
+                >
+                  <CircleHelp className="h-4 w-4" aria-hidden="true" />
+                  <span>Help & FAQ</span>
+                </Link>
+
+                <Link
+                  to="/about"
+                  onClick={() => setIsSidebarOpen(false)}
                   className={`mb-2 flex w-full items-center gap-2 rounded-lg border px-3 py-3 text-left font-semibold ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'}`}
                 >
                   <Users className="h-4 w-4" aria-hidden="true" />
                   <span>About</span>
-                </button>
+                </Link>
               </div>
               {user ? (
                 <div className={`flex-shrink-0 border-t p-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
@@ -3008,8 +3257,8 @@ export default function App() {
               <strong>{pendingImportData.references?.length ?? 0} baseline(s)</strong> in this file.
             </p>
             <div className={`mt-3 rounded-lg border p-3 text-xs ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-400' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
-              <p className="mb-1"><strong>Merge</strong> — adds new sets, skips any whose title matches an existing set.</p>
-              <p><strong>Replace All</strong> — clears all sets, baselines, and history before restoring the file.</p>
+              <p className="mb-1"><strong>Merge</strong>: adds new sets, skips any whose title matches an existing set.</p>
+              <p><strong>Replace All</strong>: clears all sets, baselines, and history before restoring the file.</p>
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
               <button
@@ -3129,10 +3378,10 @@ export default function App() {
           panelClassName={`w-full max-w-md rounded-lg border p-6 shadow-md ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
         >
             <ol className={`mt-4 list-decimal space-y-2 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-              <li>Click <strong>Check My Sign</strong> — a <strong>1.5-second countdown</strong> gives you time to get ready.</li>
-              <li>The app <strong>records for 1 second</strong> — perform your sign during this window.</li>
+              <li>Click <strong>Check My Sign</strong>. A <strong>1.5-second countdown</strong> gives you time to get ready.</li>
+              <li>The app <strong>records for 1 second</strong>, so perform your sign during this window.</li>
               <li>Your sign is compared <strong>frame-by-frame</strong> against your recorded baseline.</li>
-              <li>For <strong>one-handed signs</strong>, keep your other hand out of frame — both hands are captured if visible.</li>
+              <li>For <strong>one-handed signs</strong>, keep your other hand out of frame. Both hands are captured if visible.</li>
               <li>Use the <strong>In Order / Random</strong> toggle in the header to switch practice modes.</li>
             </ol>
             <div className="mt-5">
@@ -3154,10 +3403,10 @@ export default function App() {
         >
             <ol className={`mt-4 list-decimal space-y-2 pl-5 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
               <li>A <strong>1.5-second countdown</strong> gives you time to get into position.</li>
-              <li>The app then <strong>records for 1 second</strong> — perform your sign during this window.</li>
+              <li>The app then <strong>records for 1 second</strong>, so perform your sign during this window.</li>
               <li>For <strong>static signs</strong>, hold the handshape steady. For <strong>dynamic signs</strong>, complete the full natural motion.</li>
               <li>Keep your hand <strong>clearly visible</strong> in the camera for the entire second.</li>
-              <li>For <strong>one-handed signs</strong>, keep your other hand out of frame — both hands are captured if visible.</li>
+              <li>For <strong>one-handed signs</strong>, keep your other hand out of frame. Both hands are captured if visible.</li>
             </ol>
             <div className="mt-5 flex gap-2">
               <button
@@ -3179,96 +3428,7 @@ export default function App() {
         </Modal>
       ) : null}
 
-      {showAuthModal ? (
-        <Modal
-          onClose={() => { setShowAuthModal(false); setAuthError(''); }}
-          labelledBy="auth-modal-title"
-          panelClassName={`w-full max-w-sm rounded-lg border p-6 shadow-md ${isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}
-        >
-            <div className="mb-1 flex items-center justify-between">
-              <h2 id="auth-modal-title" className="text-xl font-bold">{authMode === 'signin' ? 'Sign In' : 'Create Account'}</h2>
-              <button
-                onClick={() => { setShowAuthModal(false); setAuthError(''); }}
-                aria-label="Close sign-in dialog"
-                className={`rounded-lg p-1 ${isDarkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
-              >
-                <X className="h-5 w-5" aria-hidden="true" />
-              </button>
-            </div>
-            <p className={`mb-4 text-xs leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-              An account is optional — SignCards works fully offline without one. Signing in backs up your
-              baselines and card sets to the cloud, so you don't lose them if this device's storage is
-              cleared, and lets you pick up on another device.
-            </p>
-
-            {!firebaseConfigured ? (
-              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
-                Firebase is not configured yet. Add your VITE_FIREBASE_* keys to .env.local to enable cloud sync.
-              </p>
-            ) : (
-              <>
-                <button
-                  onClick={handleSignInGoogle}
-                  disabled={authSubmitting}
-                  className={`flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm font-semibold disabled:opacity-50 ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
-                >
-                  <svg className="h-4 w-4" viewBox="0 0 24 24">
-                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
-                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                  </svg>
-                  Continue with Google
-                </button>
-                <div className="my-4 flex items-center gap-3">
-                  <div className={`flex-1 border-t ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
-                  <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>or</span>
-                  <div className={`flex-1 border-t ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`} />
-                </div>
-                <div className="space-y-3">
-                  <input
-                    type="email"
-                    placeholder="Email"
-                    aria-label="Email address"
-                    autoComplete="email"
-                    value={authEmail}
-                    onChange={(e) => setAuthEmail(e.target.value)}
-                    className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 ${isDarkMode ? 'border-slate-600 bg-slate-700 text-slate-100 placeholder:text-slate-500' : 'border-slate-300 bg-white text-slate-900'}`}
-                  />
-                  <input
-                    type="password"
-                    placeholder={authMode === 'signup' ? 'Password (min 8 chars)' : 'Password'}
-                    aria-label={authMode === 'signup' ? 'Password, minimum 8 characters' : 'Password'}
-                    autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
-                    value={authPassword}
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') authMode === 'signin' ? handleSignInEmail() : handleSignUpEmail(); }}
-                    className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 ${isDarkMode ? 'border-slate-600 bg-slate-700 text-slate-100 placeholder:text-slate-500' : 'border-slate-300 bg-white text-slate-900'}`}
-                  />
-                </div>
-                {authError ? <p role="alert" className="mt-2 text-xs text-rose-500">{authError}</p> : null}
-                <button
-                  onClick={authMode === 'signin' ? handleSignInEmail : handleSignUpEmail}
-                  disabled={authSubmitting || !authEmail || !authPassword}
-                  className="mt-4 w-full rounded-md bg-indigo-600 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {authSubmitting ? 'Please wait…' : authMode === 'signin' ? 'Sign In' : 'Create Account'}
-                </button>
-                <p className={`mt-3 text-center text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                  {authMode === 'signin' ? "Don't have an account? " : 'Already have an account? '}
-                  <button
-                    onClick={() => { setAuthMode(authMode === 'signin' ? 'signup' : 'signin'); setAuthError(''); }}
-                    className={`font-semibold underline ${isDarkMode ? 'text-indigo-300' : 'text-indigo-700'}`}
-                  >
-                    {authMode === 'signin' ? 'Create one' : 'Sign in'}
-                  </button>
-                </p>
-              </>
-            )}
-        </Modal>
-      ) : null}
-
-      {showTutorial && view === 'app' ? (
+      {showTutorial && pathname === '/app' ? (
         <div className="fixed inset-0 z-[80] bg-slate-950/65">
           {tutorialTargetRect ? (
             <div

@@ -443,7 +443,7 @@ export function analyzeHand(refFrames, refMotion, capFrames, capMotion, features
       const refZone = bodyZoneFor(refBody);
       const capZone = bodyZoneFor(capBody);
       if (refZone.key !== capZone.key) {
-        notes.push(`Sign this at ${refZone.label} level — you signed at ${capZone.label} level.`);
+        notes.push(`Sign this at ${refZone.label} level. You signed at ${capZone.label} level.`);
       } else {
         notes.push(capBody > refBody ? 'Sign this a little higher.' : 'Sign this a little lower.');
       }
@@ -468,7 +468,7 @@ export function analyzeHand(refFrames, refMotion, capFrames, capMotion, features
 
       if (motionEnabled) {
         if (travelRatio < 0.45) {
-          notes.push('This sign needs movement — your hand stayed too still.');
+          notes.push('This sign needs movement. Your hand stayed too still.');
           scoreCap = Math.min(scoreCap, MOTION_FAIL_CAP);
         } else if (refFeat.rangeX > refFeat.rangeY * 1.6 && capFeat.rangeX < refFeat.rangeX * 0.5) {
           notes.push('Expected more side-to-side movement.');
@@ -484,7 +484,7 @@ export function analyzeHand(refFrames, refMotion, capFrames, capMotion, features
       const excess = capFeat.path - Math.max(refFeat.path, MOTION_DYNAMIC_PATH * 0.5);
       motionScore = excess <= 0 ? 1 : clamp01(1 - excess / MOTION_DYNAMIC_PATH);
       if (motionEnabled && motionScore < 0.7) {
-        notes.push('Hold this sign steadier — it should not travel.');
+        notes.push('Hold this sign steadier. It should not travel.');
         if (motionScore < 0.5) scoreCap = Math.min(scoreCap, MOTION_PARTIAL_CAP);
       }
     }

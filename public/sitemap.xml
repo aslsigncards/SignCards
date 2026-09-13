@@ -1,13 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <!--
-    SignCards is currently a single-page app with no distinct URLs per screen,
-    so there is only one indexable page. Add more <url> entries here if the
-    app gains real routes (e.g. via react-router) for /about, /stats, etc.
+    /app and /signin are intentionally excluded and marked noindex: they are
+    the interactive tool and the sign-in form, not content worth ranking.
   -->
   <url>
     <loc>https://signcards.app/</loc>
     <changefreq>monthly</changefreq>
     <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://signcards.app/about</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://signcards.app/help</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
   </url>
 </urlset>
