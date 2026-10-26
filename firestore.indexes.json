@@ -1,0 +1,11 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "baselines", "fieldPath": "h1", "indexes": [] },
+    { "collectionGroup": "baselines", "fieldPath": "h2", "indexes": [] },
+    { "collectionGroup": "baselines", "fieldPath": "motion", "indexes": [] },
+    { "collectionGroup": "baselines", "fieldPath": "motion2", "indexes": [] },
+    { "collectionGroup": "history", "fieldPath": "entries", "indexes": [] },
+    { "collectionGroup": "customSets", "fieldPath": "words", "indexes": [] }
+  ]
+}

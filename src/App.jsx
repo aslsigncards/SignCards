@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import Webcam from 'react-webcam';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from './db';
+import { db, newCloudId } from './db';
 import {
   ArrowRight,
   Camera,
@@ -49,8 +49,8 @@ import {
 } from 'firebase/auth';
 import { auth, firebaseConfigured, logAnalyticsEvent } from './firebase';
 import {
-  downloadAndMerge, downloadSetBaselines, uploadBaseline,
-  uploadCustomSet, uploadHistoryEntry, uploadAllLocalData,
+  downloadAndMerge, uploadBaseline, resetSyncCursors,
+  uploadCustomSet, scheduleHistoryFlush, flushHistory, uploadAllLocalData,
 } from './syncService';
 
 import {
@@ -272,8 +272,9 @@ export default function App() {
       status: success ? 'correct' : 'incorrect',
       ...(similarity !== undefined ? { similarity } : {}),
     };
-    db.history.add(histEntry);
-    if (userRef.current) uploadHistoryEntry(userRef.current.uid, histEntry);
+    db.history.add(histEntry).then(() => {
+      if (userRef.current) scheduleHistoryFlush(userRef.current.uid, db);
+    });
 
     pushDebugLog(
       `${success ? 'PASS' : 'FAIL'} on ${currentWordRef.current} at ${similarity !== undefined ? `${(similarity * 100).toFixed(0)}%` : 'manual'} similarity.`
@@ -360,16 +361,18 @@ export default function App() {
     const saveM2 = saveH2 && m2Samples.length >= 8 ? m2Samples : null;
     const handLabel = saveH1 && saveH2 ? '2-hand' : saveH1 ? 'left' : 'right';
     const currentKey = getReferenceKey(currentWordRef.current);
+    // Same timestamp locally and in the cloud, or the next sync re-downloads it.
+    const recordedAt = Date.now();
     await db.references.put({
       word: currentKey,
-      timestamp: Date.now(),
+      timestamp: recordedAt,
       frames: saveH1,
       ...(saveH2 ? { frames2: saveH2 } : {}),
       ...(saveM1 ? { motion: saveM1 } : {}),
       ...(saveM2 ? { motion2: saveM2 } : {}),
     });
     if (userRef.current) {
-      uploadBaseline(userRef.current.uid, currentKey, saveH1, saveH2, Date.now(), saveM1, saveM2).catch(() => {});
+      uploadBaseline(userRef.current.uid, currentKey, saveH1, saveH2, recordedAt, saveM1, saveM2, db).catch(() => {});
     }
     setIsRecordingReference(false);
     logAnalyticsEvent('baseline_recorded', { word: currentWordRef.current, hand: handLabel, set: currentSetRef.current });
@@ -602,7 +605,7 @@ export default function App() {
     setAppPage('learn');
     navigate('/app');
     if (userRef.current) {
-      downloadSetBaselines(userRef.current.uid, setKey, db).catch(() => {});
+      downloadAndMerge(userRef.current.uid, db).catch(() => {});
     }
   };
 
@@ -637,9 +640,9 @@ export default function App() {
       return;
     }
 
-    const newId = await db.customSets.add({ title, words: cardObjects });
+    const newId = await db.customSets.add({ title, words: cardObjects, cloudId: newCloudId(), updatedAt: Date.now() });
     if (userRef.current) {
-      uploadCustomSet(userRef.current.uid, { id: newId, title, words: cardObjects }).catch(() => {});
+      uploadCustomSet(userRef.current.uid, newId, db).catch(() => {});
     }
     logAnalyticsEvent('create_set', { word_count: cardObjects.length });
     resetCreateForm();
@@ -673,9 +676,9 @@ export default function App() {
       if (keys.length) await db.references.bulkDelete(keys);
     }
 
-    await db.customSets.update(editingSetId, { title, words: cardObjects });
+    await db.customSets.update(editingSetId, { title, words: cardObjects, updatedAt: Date.now() });
     if (userRef.current) {
-      uploadCustomSet(userRef.current.uid, { id: editingSetId, title, words: cardObjects }).catch(() => {});
+      uploadCustomSet(userRef.current.uid, editingSetId, db).catch(() => {});
     }
 
     const missingCount = newWords.filter(
@@ -751,6 +754,7 @@ export default function App() {
   const handleSignOut = async () => {
     if (!auth) return;
     logAnalyticsEvent('logout');
+    if (userRef.current) await flushHistory(userRef.current.uid, db).catch(() => {});
     await fbSignOut(auth);
     setUser(null);
     userRef.current = null;
@@ -796,6 +800,7 @@ export default function App() {
     try {
       if (clearLocal) {
         await Promise.all([db.customSets.clear(), db.references.clear(), db.history.clear()]);
+        resetSyncCursors();
       }
       await deleteUser(auth.currentUser);
       setUser(null);
@@ -920,6 +925,7 @@ export default function App() {
       await db.customSets.clear();
       await db.references.clear();
       await db.history.clear();
+      resetSyncCursors();
     }
 
     for (const set of (data.customSets || [])) {
@@ -931,7 +937,7 @@ export default function App() {
         }
       }
       const { id: _oldId, ...setWithoutId } = set;
-      const newId = await db.customSets.add(setWithoutId);
+      const newId = await db.customSets.add({ ...setWithoutId, cloudId: newCloudId(), updatedAt: Date.now() });
       idRemap[`custom:${set.id}`] = `custom:${newId}`;
     }
 
@@ -1415,6 +1421,8 @@ export default function App() {
         setSyncStatus('syncing');
         try {
           await downloadAndMerge(fbUser.uid, db);
+          // Picks up anything that failed to upload earlier; no writes if nothing is pending.
+          await uploadAllLocalData(fbUser.uid, db);
           setSyncStatus('done');
           setLastSyncedAt(Date.now());
         } catch {
@@ -1422,7 +1430,17 @@ export default function App() {
         }
       }
     });
-    return () => unsub();
+    // Send batched practice history before the tab is closed or backgrounded.
+    const onHide = () => {
+      if (document.visibilityState === 'hidden' && userRef.current) {
+        flushHistory(userRef.current.uid, db).catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      unsub();
+      document.removeEventListener('visibilitychange', onHide);
+    };
   }, []);
 
   const startTutorial = () => {
@@ -1499,12 +1517,15 @@ export default function App() {
       {pathname === '/' ? (
         <main id="main-content" tabIndex={-1}>
           <section className="w-full px-6 pb-14 pt-16 text-center">
+            {/* index.css sets unlayered h1/p margins that beat mx-auto, so center via a wrapper. */}
+            <div className="mx-auto max-w-2xl">
             <h1 className={`mx-auto max-w-2xl text-4xl font-semibold leading-tight tracking-tight md:text-[2.75rem] ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>
               Learn American Sign Language with fully customizable flashcards
             </h1>
             <p className={`mx-auto mt-5 max-w-2xl text-lg leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
               Record your own baseline signs, build custom decks, and use real-time hand tracking to check your accuracy frame-by-frame.
             </p>
+            </div>
             <div className="mt-8 flex justify-center">
               <Link
                 to="/app"
@@ -1515,7 +1536,8 @@ export default function App() {
               </Link>
             </div>
             {!user && !authLoading ? (
-              <p className={`mt-5 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              <div className="mx-auto mt-10 max-w-md">
+              <p className={`text-sm leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                 <Link
                   to="/signin"
                   className="font-semibold underline underline-offset-2 hover:text-indigo-600"
@@ -1526,10 +1548,13 @@ export default function App() {
                 works fully offline, but signing in reduces the risk of losing your card data if this
                 device's storage is ever cleared.
               </p>
+              </div>
             ) : user ? (
-              <p className={`mt-5 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+              <div className="mx-auto mt-10 max-w-md">
+              <p className={`text-sm leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                 Signed in as <strong>{user.email}</strong>. Your data syncs automatically.
               </p>
+              </div>
             ) : null}
           </section>
 
