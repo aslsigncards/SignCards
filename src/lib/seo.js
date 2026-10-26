@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 
 const SITE_NAME = 'SignCards';
-const SITE_URL = 'https://signcards.app';
+const SITE_URL = 'https://signcards.web.app';
 
 function setMeta(name, content, attr = 'name') {
   let tag = document.head.querySelector(`meta[${attr}="${name}"]`);

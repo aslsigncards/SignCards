@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://signcards.app/sitemap.xml
+Sitemap: https://signcards.web.app/sitemap.xml

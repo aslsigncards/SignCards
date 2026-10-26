@@ -5,17 +5,17 @@
     the interactive tool and the sign-in form, not content worth ranking.
   -->
   <url>
-    <loc>https://signcards.app/</loc>
+    <loc>https://signcards.web.app/</loc>
     <changefreq>monthly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://signcards.app/about</loc>
+    <loc>https://signcards.web.app/about</loc>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
-    <loc>https://signcards.app/help</loc>
+    <loc>https://signcards.web.app/help</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
