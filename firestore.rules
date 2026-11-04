@@ -1,8 +1,67 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+    function owns(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+    function canWrite(uid) {
+      return owns(uid) && !exists(/databases/$(database)/documents/users/$(uid));
+    }
+    function validSync(data) {
+      return data.syncedAt == request.time;
+    }
+    function boundedString(value, maximum) {
+      return value is string && value.size() <= maximum;
+    }
+    function validSet(data, setId) {
+      return validSync(data) && data.cloudId == setId && data.updatedAt is number
+        && ((data.get('deleted', false) == true
+          && data.keys().hasOnly(['cloudId', 'deleted', 'updatedAt', 'syncedAt']))
+        || (data.keys().hasOnly(['cloudId', 'title', 'words', 'updatedAt', 'syncedAt'])
+          && boundedString(data.title, 120) && data.words is list && data.words.size() <= 1000));
+    }
+    function activeBaselineSet(uid, refKey) {
+      return !refKey.matches('^custom:.*')
+        || (exists(/databases/$(database)/documents/users/$(uid)/customSets/$(refKey.split(':')[1]))
+          && get(/databases/$(database)/documents/users/$(uid)/customSets/$(refKey.split(':')[1])).data.get('deleted', false) == false);
+    }
+    match /users/{uid} {
+      allow read: if owns(uid);
+      allow create, update: if owns(uid)
+        && request.resource.data.keys().hasOnly(['deleting', 'syncedAt'])
+        && request.resource.data.deleting == true
+        && validSync(request.resource.data);
+    }
+    match /users/{uid}/baselines/{baselineId} {
+      allow read, delete: if owns(uid);
+      allow create, update: if canWrite(uid)
+        && request.resource.data.keys().hasOnly(['refKey', 'h1', 'h2', 'motion', 'motion2', 'updatedAt', 'syncedAt'])
+        && validSync(request.resource.data)
+        && boundedString(request.resource.data.refKey, 300)
+        && activeBaselineSet(uid, request.resource.data.refKey)
+        && request.resource.data.updatedAt is number
+        && boundedString(request.resource.data.get('h1', ''), 201600)
+        && boundedString(request.resource.data.get('h2', ''), 201600)
+        && (request.resource.data.get('h1', '').size() > 0 || request.resource.data.get('h2', '').size() > 0)
+        && request.resource.data.get('motion', []) is list
+        && request.resource.data.get('motion', []).size() <= 600
+        && request.resource.data.get('motion2', []) is list
+        && request.resource.data.get('motion2', []).size() <= 600;
+    }
+    match /users/{uid}/customSets/{setId} {
+      allow read, delete: if owns(uid);
+      allow create: if canWrite(uid) && validSet(request.resource.data, setId);
+      allow update: if canWrite(uid) && validSet(request.resource.data, setId)
+        && (resource.data.get('deleted', false) == false || request.resource.data.get('deleted', false) == true);
+    }
+    match /users/{uid}/history/{entryId} {
+      allow read, delete: if owns(uid);
+      allow create, update: if canWrite(uid)
+        && request.resource.data.keys().hasOnly(['entries', 'syncedAt'])
+        && validSync(request.resource.data)
+        && request.resource.data.entries is list
+        && request.resource.data.entries.size() > 0
+        && request.resource.data.entries.size() <= 1000;
     }
   }
 }

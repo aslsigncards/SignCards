@@ -6,9 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "start": "serve -s dist -l tcp://0.0.0.0:$PORT",
+    "start": "vite preview",
     "lint": "oxlint",
+    "test": "firebase emulators:exec --project demo-signcards-security --only firestore,storage \"node --test --test-concurrency=1 tests/*.test.mjs\"",
     "preview": "vite preview"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "1.14.7"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.35",
@@ -20,10 +24,10 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.3",
-    "react-webcam": "^7.2.0",
-    "serve": "^14.2.6"
+    "react-webcam": "^7.2.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",

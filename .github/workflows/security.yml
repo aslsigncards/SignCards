@@ -1,0 +1,43 @@
+name: Security Checks
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '25 9 * * 1'
+permissions:
+  contents: read
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download verified Gitleaks release
+        env:
+          VERSION: 8.30.0
+        run: |
+          curl --fail --location --output /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          curl --fail --location --output /tmp/checksums.txt "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_checksums.txt"
+          expected=$(awk "/gitleaks_${VERSION}_linux_x64.tar.gz$/ {print \$1}" /tmp/checksums.txt)
+          test -n "$expected"
+          echo "$expected  /tmp/gitleaks.tar.gz" | sha256sum --check
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+      - run: /tmp/gitleaks git . --redact=100 --no-banner --log-opts="--all"
+  rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm audit --audit-level=moderate
+      - run: npm install --global firebase-tools@15.34.1
+      - run: npm test
+      - run: npm run build

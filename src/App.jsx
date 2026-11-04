@@ -45,12 +45,13 @@ import {
 import {
   onAuthStateChanged, GoogleAuthProvider, signInWithPopup,
   signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  signOut as fbSignOut, deleteUser, updatePassword,
+  signOut as fbSignOut, deleteUser, updatePassword, getIdTokenResult,
 } from 'firebase/auth';
 import { auth, firebaseConfigured, logAnalyticsEvent } from './firebase';
 import {
   downloadAndMerge, uploadBaseline, resetSyncCursors,
   uploadCustomSet, scheduleHistoryFlush, flushHistory, uploadAllLocalData,
+  deleteCloudAccountData, deleteCloudSet,
 } from './syncService';
 
 import {
@@ -146,6 +147,7 @@ export default function App() {
   const [changePasswordError, setChangePasswordError] = useState('');
   const [changePasswordSuccess, setChangePasswordSuccess] = useState(false);
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   const webcamRef = useRef(null);
   const streamRef = useRef(null);
@@ -768,8 +770,8 @@ export default function App() {
     if (!userRef.current) return;
     setSyncStatus('syncing');
     try {
-      await uploadAllLocalData(userRef.current.uid, db);
       await downloadAndMerge(userRef.current.uid, db);
+      await uploadAllLocalData(userRef.current.uid, db);
       setSyncStatus('done');
       setLastSyncedAt(Date.now());
     } catch {
@@ -796,13 +798,21 @@ export default function App() {
   };
 
   const handleDeleteAccount = async (clearLocal) => {
-    if (!auth?.currentUser) return;
+    if (!auth?.currentUser || isDeletingAccount) return;
+    const account = auth.currentUser;
+    setIsDeletingAccount(true);
     try {
+      const token = await getIdTokenResult(account, true);
+      if (!Number.isFinite(token.claims.auth_time) || Date.now() / 1000 - token.claims.auth_time > 300) {
+        throw Object.assign(new Error('Recent sign-in required.'), { code: 'auth/requires-recent-login' });
+      }
+      userRef.current = null;
+      await deleteCloudAccountData(account.uid);
+      await deleteUser(account);
       if (clearLocal) {
         await Promise.all([db.customSets.clear(), db.references.clear(), db.history.clear()]);
-        resetSyncCursors();
       }
-      await deleteUser(auth.currentUser);
+      resetSyncCursors();
       setUser(null);
       userRef.current = null;
       setShowDeleteAccountConfirm(false);
@@ -811,11 +821,14 @@ export default function App() {
       setAppPage('learn');
       setIsSidebarOpen(false);
     } catch (e) {
+      userRef.current = auth.currentUser;
       window.alert(
         e.code === 'auth/requires-recent-login'
           ? 'Please sign out and sign back in before deleting your account.'
-          : ('Failed to delete account: ' + (e.message || 'Unknown error'))
+          : ('Deletion did not finish. Please retry to complete cloud cleanup. ' + (e.message || 'Unknown error'))
       );
+    } finally {
+      setIsDeletingAccount(false);
     }
   };
 
@@ -844,6 +857,16 @@ export default function App() {
 
   const handleDeleteSet = async (candidate) => {
     if (!candidate?.isCustom || candidate.id == null) return;
+
+    const localSet = await db.customSets.get(candidate.id);
+    if (userRef.current && localSet?.cloudId) {
+      try {
+        await deleteCloudSet(userRef.current.uid, localSet.cloudId);
+      } catch {
+        window.alert('Cloud deletion could not finish. Please reconnect and retry. The local set has been kept.');
+        return;
+      }
+    }
 
     await db.customSets.delete(candidate.id);
     const referencePrimaryKeys = await db.references.where('word').startsWith(`${candidate.key}:`).primaryKeys();
@@ -2247,6 +2270,7 @@ export default function App() {
               <input
                 value={newSetTitle}
                 onChange={(e) => setNewSetTitle(e.target.value)}
+                maxLength={120}
                 placeholder="e.g. Week 1 Vocabulary"
                 className={`w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100 placeholder:text-slate-500 focus:ring-indigo-500' : 'border-slate-300 bg-white text-slate-900 focus:ring-indigo-200'}`}
               />
@@ -2905,7 +2929,9 @@ export default function App() {
                   {showDeleteAccountConfirm ? (
                     <div>
                       <p className={`mb-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-                        Permanently delete your account? This cannot be undone.
+                        Permanently delete your login and Firestore backups? This cannot be undone.
+                        If deletion is interrupted, retry to finish; cloud writes are blocked once cleanup starts.
+                        A small deletion marker remains to block stale uploads. Legacy Storage files require site-owner cleanup.
                       </p>
                       <p className={`mb-3 text-sm font-semibold ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
                         Also clear all local data (baselines, sets, history) from this device?
@@ -2913,18 +2939,21 @@ export default function App() {
                       <div className="flex flex-wrap gap-2">
                         <button
                           onClick={() => handleDeleteAccount(true)}
+                          disabled={isDeletingAccount}
                           className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white hover:bg-rose-700"
                         >
                           Delete Account + Clear Local Data
                         </button>
                         <button
                           onClick={() => handleDeleteAccount(false)}
+                          disabled={isDeletingAccount}
                           className={`rounded-lg border px-3 py-2 text-xs font-bold ${isDarkMode ? 'border-rose-700 text-rose-400 hover:bg-rose-900/30' : 'border-rose-300 text-rose-700 hover:bg-rose-100'}`}
                         >
                           Delete Account (Keep Local Data)
                         </button>
                         <button
                           onClick={() => setShowDeleteAccountConfirm(false)}
+                          disabled={isDeletingAccount}
                           className={`rounded-lg border px-3 py-2 text-xs font-semibold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}
                         >
                           Cancel

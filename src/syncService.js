@@ -1,5 +1,6 @@
 import { loadFirestore, loadStorage } from './firebase';
 import { newCloudId } from './db';
+import { deleteAccountBackup, deleteSetBackup } from './lib/cloudDeletion';
 
 const FLOATS_PER_FRAME = 63; // 21 landmarks × 3 (x, y, z)
 
@@ -134,6 +135,22 @@ export async function uploadCustomSet(uid, localId, localDb) {
 let historyFlushTimer = null;
 let historyFlushChain = Promise.resolve();
 
+export async function deleteCloudAccountData(uid) {
+  clearTimeout(historyFlushTimer);
+  historyFlushTimer = null;
+  await historyFlushChain.catch(() => {});
+  if (inflight?.uid === uid) await inflight.promise.catch(() => {});
+  const fs = await loadFirestore();
+  if (!fs.db) throw new Error('Cloud sync is not configured.');
+  await deleteAccountBackup(fs, uid);
+}
+
+export async function deleteCloudSet(uid, cloudId) {
+  const fs = await loadFirestore();
+  if (!fs.db) throw new Error('Cloud sync is not configured.');
+  await deleteSetBackup(fs, uid, cloudId);
+}
+
 export function scheduleHistoryFlush(uid, localDb) {
   clearTimeout(historyFlushTimer);
   historyFlushTimer = setTimeout(() => { flushHistory(uid, localDb).catch(() => {}); }, HISTORY_FLUSH_DELAY_MS);
@@ -229,6 +246,15 @@ async function runDownloadAndMerge(uid, db) {
   for (const data of sets.rows) {
     if (data.cloudId) {
       const local = await db.customSets.where('cloudId').equals(data.cloudId).first();
+      if (data.deleted) {
+        if (local) {
+          await db.transaction('rw', db.customSets, db.references, async () => {
+            await db.references.where('word').startsWith(`custom:${local.id}:`).delete();
+            await db.customSets.delete(local.id);
+          });
+        }
+        continue;
+      }
       if (local) {
         if ((data.updatedAt ?? 0) > (local.updatedAt ?? 0)) {
           await db.customSets.update(local.id, {
@@ -243,7 +269,7 @@ async function runDownloadAndMerge(uid, db) {
       }
     }
     // Docs from before cloudIds existed only match by title, as they always did.
-    const sameTitle = await db.customSets.where('title').equals(data.title).first();
+    const sameTitle = !data.cloudId && await db.customSets.where('title').equals(data.title).first();
     if (!sameTitle) {
       const updatedAt = data.updatedAt ?? Date.now();
       await db.customSets.add({
