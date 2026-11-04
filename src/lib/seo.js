@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 
 const SITE_NAME = 'SignCards';
 const SITE_URL = 'https://signcards.web.app';
+const HOME_TITLE = 'SignCards - Customizable ASL Flashcards With AI-Assisted Feedback';
 
 function setMeta(name, content, attr = 'name') {
   let tag = document.head.querySelector(`meta[${attr}="${name}"]`);
@@ -30,7 +31,7 @@ function setCanonical(path) {
  */
 export function useDocumentMeta({ title, description, path, noindex = false }) {
   useEffect(() => {
-    const fullTitle = title ? `${title} | ${SITE_NAME}` : SITE_NAME;
+    const fullTitle = title ? `${title} | ${SITE_NAME}` : HOME_TITLE;
     document.title = fullTitle;
     if (description) {
       setMeta('description', description);
