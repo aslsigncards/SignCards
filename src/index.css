@@ -106,6 +106,31 @@ body {
   margin: 0;
 }
 
+.app-viewport,
+.practice-layout {
+  height: calc(100vh - 4rem - 1px);
+  height: calc(100dvh - 4rem - 1px);
+}
+
+.practice-camera {
+  container-type: size;
+  min-height: 12rem;
+}
+
+.camera-frame {
+  width: min(100cqw, calc(100cqh * var(--camera-aspect)));
+  height: min(100cqh, calc(100cqw / var(--camera-aspect)));
+  aspect-ratio: var(--camera-aspect);
+}
+
+@media (max-width: 639px) {
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 #root {
   width: 100%;
   max-width: none;

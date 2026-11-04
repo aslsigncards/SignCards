@@ -4,6 +4,7 @@ import Webcam from 'react-webcam';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, newCloudId } from './db';
 import {
+  ArrowLeft,
   ArrowRight,
   Camera,
   CameraOff,
@@ -1619,7 +1620,7 @@ export default function App() {
           </footer>
         </main>
       ) : pathname === '/about' ? (
-        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] overflow-y-auto p-3 lg:p-4">
+        <main id="main-content" tabIndex={-1} className="app-viewport w-full overflow-y-auto p-3 lg:p-4">
           <section className={`mx-auto max-w-4xl rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-4 flex items-center gap-3">
               <Link
@@ -1696,7 +1697,7 @@ export default function App() {
           </section>
         </main>
       ) : pathname === '/help' ? (
-        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] overflow-y-auto p-3 lg:p-4">
+        <main id="main-content" tabIndex={-1} className="app-viewport w-full overflow-y-auto p-3 lg:p-4">
           <section className={`mx-auto max-w-4xl rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-4 flex items-center gap-3">
               <Link
@@ -1808,7 +1809,7 @@ export default function App() {
           </section>
         </main>
       ) : pathname === '/signin' ? (
-        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] overflow-y-auto p-3 lg:p-4">
+        <main id="main-content" tabIndex={-1} className="app-viewport w-full overflow-y-auto p-3 lg:p-4">
           <section className={`mx-auto max-w-sm rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-1 flex items-center justify-between">
               <h1 className="text-xl font-bold">{authMode === 'signin' ? 'Sign In' : 'Create Account'}</h1>
@@ -1894,7 +1895,7 @@ export default function App() {
         </main>
       ) : pathname === '/app' ? (
         appPage === 'learn' ? (
-        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] flex flex-col">
+        <main id="main-content" tabIndex={-1} className="practice-layout w-full flex flex-col">
           {/* Phase header */}
           <div data-tour="phase" className={`relative flex flex-shrink-0 items-center justify-between px-4 py-3 ${workflowPhase === 'baseline' ? 'bg-orange-700' : 'bg-emerald-700'}`}>
             <div className="flex items-center gap-2 text-white">
@@ -2018,10 +2019,10 @@ export default function App() {
           ) : null}
 
           {/* Camera */}
-          <div data-tour="camera" className={`relative min-h-0 flex-1 overflow-hidden flex items-center justify-center ${isDarkMode ? 'bg-slate-900' : 'bg-white'}`}>
+          <div data-tour="camera" className={`practice-camera relative flex-1 overflow-hidden flex items-center justify-center ${isDarkMode ? 'bg-slate-900' : 'bg-white'}`}>
             <div
-              className="relative max-w-full max-h-full"
-              style={videoAspect ? { aspectRatio: videoAspect } : { width: '100%', height: '100%' }}
+              className="camera-frame relative"
+              style={{ '--camera-aspect': videoAspect || 4 / 3 }}
             >
             <Webcam
               key={cameraKey}
@@ -2030,13 +2031,18 @@ export default function App() {
               screenshotFormat="image/jpeg"
               onUserMedia={handleUserMedia}
               onUserMediaError={handleUserMediaError}
-              className={`h-full w-full object-cover transition-transform duration-200 ${isMirrored ? 'scale-x-[-1]' : ''}`}
+              videoConstraints={{ facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }}
+              onResize={() => {
+                const video = webcamRef.current?.video;
+                if (video?.videoWidth && video.videoHeight) setVideoAspect(video.videoWidth / video.videoHeight);
+              }}
+              className={`block h-full w-full object-contain transition-transform duration-200 ${isMirrored ? 'scale-x-[-1]' : ''}`}
             />
 
             {/* Word overlay */}
-            <div className="absolute left-3 top-3 rounded-md bg-black/65 px-3 py-2 text-white backdrop-blur-md">
+            <div className="absolute left-3 top-3 max-h-[calc(100%-1.5rem)] max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-md bg-black/65 px-3 py-2 text-white backdrop-blur-md">
               <p className="text-[10px] font-semibold uppercase tracking-widest opacity-70">Sign this</p>
-              <p className="mt-0.5 text-4xl font-bold leading-none tracking-tight">{currentWord}</p>
+              <p className="mt-0.5 break-words text-2xl font-bold leading-tight sm:text-4xl [overflow-wrap:anywhere]">{currentWord}</p>
               <div className="mt-1.5 flex items-center gap-1.5">
                 <div className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${hasRecordedBaseline(activeReference) ? 'bg-emerald-400' : 'bg-amber-400'}`} />
                 <span className="text-[10px] font-semibold opacity-70">{hasRecordedBaseline(activeReference) ? 'Baseline recorded' : 'Record baseline'}</span>
@@ -2055,63 +2061,6 @@ export default function App() {
                       style={{ width: `${activeRecordingProgress * 100}%` }}
                     />
                   </div>
-                </div>
-              </div>
-            ) : null}
-
-            {/* Practice result */}
-            {practiceResult && !isActiveRecording ? (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                <div className="rounded-lg bg-white px-8 py-6 text-center shadow-md">
-                  <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full ${practiceResult.passed ? 'bg-emerald-100' : 'bg-amber-100'}`}>
-                    {practiceResult.passed
-                      ? <CheckCircle2 className="h-8 w-8 text-emerald-600" aria-hidden="true" />
-                      : <XCircle className="h-8 w-8 text-amber-500" aria-hidden="true" />}
-                  </div>
-                  <p className={`mt-3 text-xl font-bold ${practiceResult.passed ? 'text-emerald-700' : 'text-slate-800'}`}>
-                    {practiceResult.passed ? 'Correct' : 'Not quite'}
-                  </p>
-                  <p className="mt-1 text-4xl font-bold text-slate-900">{(practiceResult.similarity * 100).toFixed(0)}%</p>
-                  {practiceResult.notes?.length ? (
-                    <ul className="mx-auto mt-3 max-w-xs space-y-1 text-left">
-                      {practiceResult.notes.map((note) => (
-                        <li key={note} className="flex items-start gap-1.5 text-xs text-slate-600">
-                          <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-400" />
-                          <span>{note}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                  <div className="mt-5 flex gap-3">
-                    <button
-                      onClick={() => setPracticeResult(null)}
-                      className="rounded-md border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Try Again
-                    </button>
-                    <button
-                      onClick={() => {
-                        handleValidation(practiceResult.passed, practiceResult.similarity, true);
-                        setPracticeResult(null);
-                      }}
-                      className={`rounded-md px-5 py-2.5 text-sm font-bold text-white ${practiceResult.passed ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-700 hover:bg-slate-800'}`}
-                    >
-                      Move On →
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {/* Buffering countdown */}
-            {isBuffering ? (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/35">
-                <div className="rounded-lg bg-white px-6 py-4 text-center shadow-sm">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Get Ready</p>
-                  <p className="text-2xl font-bold text-slate-900">{bufferSecondsLeft.toFixed(1)}s</p>
-                  <p className="mt-1 text-xs text-slate-600">
-                    {pendingAction === 'record' ? 'Capturing baseline soon...' : 'Checking answer soon...'}
-                  </p>
                 </div>
               </div>
             ) : null}
@@ -2167,6 +2116,65 @@ export default function App() {
               </div>
             ) : null}
 
+            </div>
+
+            {/* Practice result */}
+            {practiceResult && !isActiveRecording ? (
+              <div className="absolute inset-0 z-10 flex flex-col overflow-y-auto bg-black/50 p-3">
+                <div className="mx-auto my-auto w-full max-w-sm shrink-0 rounded-lg bg-white px-4 py-4 text-center shadow-md sm:px-8 sm:py-6">
+                  <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full ${practiceResult.passed ? 'bg-emerald-100' : 'bg-amber-100'}`}>
+                    {practiceResult.passed
+                      ? <CheckCircle2 className="h-8 w-8 text-emerald-600" aria-hidden="true" />
+                      : <XCircle className="h-8 w-8 text-amber-500" aria-hidden="true" />}
+                  </div>
+                  <p className={`mt-3 text-xl font-bold ${practiceResult.passed ? 'text-emerald-700' : 'text-slate-800'}`}>
+                    {practiceResult.passed ? 'Correct' : 'Not quite'}
+                  </p>
+                  <p className="mt-1 text-4xl font-bold text-slate-900">{(practiceResult.similarity * 100).toFixed(0)}%</p>
+                  {practiceResult.notes?.length ? (
+                    <ul className="mx-auto mt-3 max-w-xs space-y-1 text-left">
+                      {practiceResult.notes.map((note) => (
+                        <li key={note} className="flex items-start gap-1.5 text-xs text-slate-600">
+                          <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-400" />
+                          <span>{note}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <div className="mt-5 flex flex-wrap justify-center gap-3">
+                    <button
+                      onClick={() => setPracticeResult(null)}
+                      className="rounded-md border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Try Again
+                    </button>
+                    <button
+                      onClick={() => {
+                        handleValidation(practiceResult.passed, practiceResult.similarity, true);
+                        setPracticeResult(null);
+                      }}
+                      className={`rounded-md px-5 py-2.5 text-sm font-bold text-white ${practiceResult.passed ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-700 hover:bg-slate-800'}`}
+                    >
+                      Move On →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Buffering countdown */}
+            {isBuffering ? (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/35 p-3">
+                <div className="rounded-lg bg-white px-6 py-4 text-center shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Get Ready</p>
+                  <p className="text-2xl font-bold text-slate-900">{bufferSecondsLeft.toFixed(1)}s</p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    {pendingAction === 'record' ? 'Capturing baseline soon...' : 'Checking answer soon...'}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
             {/* Camera initializing overlay */}
             {engineLoading ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/80">
@@ -2180,7 +2188,7 @@ export default function App() {
                 <CameraOff className="h-8 w-8 text-white/70" aria-hidden="true" />
                 <p className="mt-3 text-sm font-semibold text-white">Camera disconnected</p>
                 <p className="mt-1 max-w-xs text-xs text-white/60">
-                  Reconnect your camera. If it is already plugged back in, tap below to reconnect.
+                  {engineError || 'Reconnect your camera, then try again.'}
                 </p>
                 <button
                   onClick={restartCamera}
@@ -2192,29 +2200,31 @@ export default function App() {
             ) : null}
 
             {/* Engine error */}
-            {engineError ? (
+            {engineError && !cameraLost ? (
               <div className="absolute bottom-3 left-3 right-3 rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                 Camera error: {engineError}
               </div>
             ) : null}
-            </div>
           </div>
 
           {/* Action bar */}
-          <div data-tour="action" className={`flex flex-shrink-0 items-center gap-3 border-t px-4 py-3 ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`}>
+          <div data-tour="action" className={`flex flex-shrink-0 items-center gap-2 border-t px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] ${isDarkMode ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-white'}`}>
             <button
               onClick={() => { setCurrentIndex((prev) => Math.max(0, prev - 1)); setPracticeResult(null); }}
               disabled={currentIndex === 0 || isActiveRecording || !!practiceResult}
-              className={`rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors disabled:opacity-30 ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'}`}
+              aria-label="Previous card"
+              title="Previous card"
+              className={`flex h-11 w-11 shrink-0 items-center justify-center gap-1 rounded-lg text-sm font-semibold transition-colors disabled:opacity-30 sm:w-auto sm:px-3 ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'}`}
             >
-              ← Prev
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Prev</span>
             </button>
 
             {workflowPhase === 'baseline' ? (
               <button
                 onClick={() => startBufferedAction('record')}
                 disabled={isBuffering || isRecordingReference || engineLoading || isActiveRecording}
-                className="flex flex-1 items-center justify-center gap-2 rounded-md bg-orange-500 py-3 text-sm font-bold text-white transition-colors hover:bg-orange-600 disabled:cursor-not-allowed"
+                className="flex h-14 min-w-0 flex-1 items-center justify-center gap-2 rounded-md bg-orange-500 px-2 py-2 text-xs font-bold text-white transition-colors hover:bg-orange-600 disabled:cursor-not-allowed sm:text-sm"
               >
                 {engineLoading
                   ? <><LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" /><span>Initializing…</span></>
@@ -2225,7 +2235,7 @@ export default function App() {
               <button
                 onClick={() => startBufferedAction('check')}
                 disabled={isBuffering || !hasRecordedBaseline(activeReference) || engineLoading || !!practiceResult || isActiveRecording}
-                className="flex flex-1 items-center justify-center gap-2 rounded-md bg-emerald-600 py-3 text-sm font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex h-14 min-w-0 flex-1 items-center justify-center gap-2 rounded-md bg-emerald-600 px-2 py-2 text-xs font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
               >
                 {engineLoading
                   ? <><LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" /><span>Initializing…</span></>
@@ -2244,14 +2254,17 @@ export default function App() {
                 setPracticeResult(null);
               }}
               disabled={(workflowPhase === 'baseline' && currentIndex === activeWords.length - 1) || isActiveRecording || !!practiceResult}
-              className={`rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors disabled:opacity-30 ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'}`}
+              aria-label="Next card"
+              title="Next card"
+              className={`flex h-11 w-11 shrink-0 items-center justify-center gap-1 rounded-lg text-sm font-semibold transition-colors disabled:opacity-30 sm:w-auto sm:px-3 ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'}`}
             >
-              Next →
+              <span className="hidden sm:inline">Next</span>
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         </main>
       ) : appPage === 'create' ? (
-        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] overflow-y-auto p-3 lg:p-4">
+        <main id="main-content" tabIndex={-1} className="app-viewport w-full overflow-y-auto p-3 lg:p-4">
           <section className={`relative mx-auto max-w-4xl rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-6 flex items-center gap-3">
               <button
@@ -2291,17 +2304,17 @@ export default function App() {
                   };
                   return (
                     <div key={card.id} className={`rounded-md border p-3 ${isDarkMode ? 'border-slate-600 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
                         <input
                           data-card-word
                           value={card.word}
                           onChange={(e) => setNewSetCards((prev) => prev.map((c) => c.id === card.id ? { ...c, word: e.target.value } : c))}
                           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addNewCard(); } }}
                           placeholder={`Card ${idx + 1}`}
-                          className={`flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none focus:ring-2 ${isDarkMode ? 'border-slate-600 bg-slate-700 text-slate-100 placeholder:text-slate-500 focus:ring-indigo-500' : 'border-slate-300 bg-white text-slate-900 focus:ring-indigo-200'}`}
+                          className={`min-h-11 min-w-0 w-full basis-full rounded-lg border px-3 py-1.5 text-sm outline-none focus:ring-2 sm:w-auto sm:flex-1 sm:basis-0 ${isDarkMode ? 'border-slate-600 bg-slate-700 text-slate-100 placeholder:text-slate-500 focus:ring-indigo-500' : 'border-slate-300 bg-white text-slate-900 focus:ring-indigo-200'}`}
                         />
 
-                        <label className={`flex shrink-0 cursor-pointer select-none items-center gap-1.5 text-xs font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                        <label className={`flex min-h-11 shrink-0 cursor-pointer select-none items-center gap-1.5 text-xs font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
                           <input
                             type="checkbox"
                             checked={card.isMultiSign}
@@ -2326,7 +2339,7 @@ export default function App() {
                               setTooltipOpenId(card.id);
                             }
                           }}
-                          className={`shrink-0 rounded-full p-0.5 transition-colors ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'} ${tooltipOpenId === card.id ? (isDarkMode ? 'text-slate-200' : 'text-slate-700') : ''}`}
+                          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors ${isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'} ${tooltipOpenId === card.id ? (isDarkMode ? 'text-slate-200' : 'text-slate-700') : ''}`}
                           aria-label="What is a multi-sign card?"
                           aria-expanded={tooltipOpenId === card.id}
                         >
@@ -2339,7 +2352,7 @@ export default function App() {
                             const filtered = prev.filter((c) => c.id !== card.id);
                             return filtered.length ? filtered : [{ id: `${Date.now()}`, word: '', isMultiSign: false, components: '' }];
                           })}
-                          className={`shrink-0 rounded-md p-1 text-rose-500 hover:bg-rose-100 ${isDarkMode ? 'hover:bg-rose-900/30' : 'hover:bg-rose-100'}`}
+                          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-rose-500 hover:bg-rose-100 ${isDarkMode ? 'hover:bg-rose-900/30' : 'hover:bg-rose-100'}`}
                           aria-label={`Remove card ${idx + 1}`}
                         >
                           <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -2402,7 +2415,7 @@ export default function App() {
           </section>
         </main>
       ) : appPage === 'settings' ? (
-        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
+        <main id="main-content" tabIndex={-1} className="app-viewport w-full p-3 lg:p-4">
           <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-4 flex items-center gap-3">
               <button
@@ -2633,7 +2646,7 @@ export default function App() {
         const rangeAttempts = dailyBuckets.reduce((sum, day) => sum + day.attempts, 0);
 
         return (
-          <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
+          <main id="main-content" tabIndex={-1} className="app-viewport w-full p-3 lg:p-4">
             <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
               <div className="mb-5 flex items-center gap-3">
                 <button
@@ -2652,7 +2665,7 @@ export default function App() {
                   id="stats-set-select"
                   value={statsKey}
                   onChange={(e) => setStatsSetKey(e.target.value)}
-                  className={`rounded-lg border px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-400 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-300 bg-white text-slate-900'}`}
+                  className={`max-w-full rounded-lg border px-3 py-2 text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-400 ${isDarkMode ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-300 bg-white text-slate-900'}`}
                 >
                   {availableSets.map((s) => (
                     <option key={s.key} value={s.key}>{s.label} ({s.words.length} cards)</option>
@@ -2661,7 +2674,7 @@ export default function App() {
               </div>
 
               {/* Summary */}
-              <div className="mb-6 grid grid-cols-3 gap-3">
+              <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div className={`rounded-md border p-4 ${isDarkMode ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-50'}`}>
                   <p className={`text-xs font-semibold uppercase tracking-wide ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Checks</p>
                   <p className={`mt-1 text-3xl font-bold ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>{totalAttempts}</p>
@@ -2818,7 +2831,7 @@ export default function App() {
           </main>
         );
       })() : appPage === 'profile' ? (
-        <main id="main-content" tabIndex={-1} className="w-full h-[calc(100vh-4rem)] p-3 lg:p-4">
+        <main id="main-content" tabIndex={-1} className="app-viewport w-full p-3 lg:p-4">
           <section className={`mx-auto h-full max-w-4xl overflow-y-auto rounded-lg border p-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-100' : 'border-slate-200 bg-white text-slate-900'}`}>
             <div className="mb-5 flex items-center gap-3">
               <button
@@ -2975,7 +2988,7 @@ export default function App() {
         </main>
       ) : null
       ) : (
-        <main id="main-content" tabIndex={-1} className="flex w-full h-[calc(100vh-4rem)] items-center justify-center p-3 text-center lg:p-4">
+        <main id="main-content" tabIndex={-1} className="app-viewport flex w-full items-center justify-center p-3 text-center lg:p-4">
           <div>
             <h1 className={`text-3xl font-bold tracking-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-900'}`}>Page not found</h1>
             <p className={`mt-2 text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
