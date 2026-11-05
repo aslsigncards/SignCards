@@ -1,6 +1,6 @@
 # SignCards
 
-A local-first American Sign Language flashcard trainer. SignCards records **your own** signing as the reference baseline, then compares each practice attempt against it frame-by-frame using webcam hand landmarks — so it grades you against your hands, not a generic dataset.
+This is the repository for [signcards.web.app](https://signcards.web.app), a local-first American Sign Language flashcard trainer. SignCards records **your own** signing as the reference baseline, then compares each practice attempt against it frame-by-frame using webcam hand landmarks — so it grades you against your hands, not a generic dataset.
 
 Built in collaboration with the McMaster ASL Club.
 
